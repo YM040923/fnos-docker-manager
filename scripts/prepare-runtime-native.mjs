@@ -39,16 +39,13 @@ copyFile(path.join(root, "src", "web", "app.js"), path.join(webOut, "app.js"));
 
 reset(runtime);
 fs.mkdirSync(path.join(runtime, "server"), { recursive: true });
+fs.mkdirSync(path.join(runtime, "bin"), { recursive: true });
 fs.mkdirSync(path.join(runtime, "shared"), { recursive: true });
 fs.mkdirSync(path.join(runtime, "web"), { recursive: true });
 fs.mkdirSync(path.join(runtime, "ui", "images"), { recursive: true });
 fs.mkdirSync(path.join(runtime, "scripts"), { recursive: true });
 fs.mkdirSync(path.join(runtime, "config"), { recursive: true });
 
-copyDir(path.join(root, "src", "server"), path.join(runtime, "server"), (source, entry) => {
-  return !entry.isFile() || !source.endsWith(".test.js");
-});
-copyDir(path.join(root, "src", "shared"), path.join(runtime, "shared"));
 copyDir(webOut, path.join(runtime, "web"));
 copyFile(path.join(root, "package.json"), path.join(runtime, "package.json"));
 copyFile(path.join(root, "packaging", "fnos", "app", "ui", "config"), path.join(runtime, "ui", "config"));
@@ -62,12 +59,27 @@ if (iconResult.status !== 0) {
   throw new Error("generate-icons failed");
 }
 
+const goExe = process.env.GO_EXE || "C:\\Users\\ymzwh\\FrpPilot\\tools\\go\\bin\\go.exe";
+const goResult = spawnSync(goExe, ["build", "-o", path.join(runtime, "bin", "docker-manager"), "./cmd/docker-manager"], {
+  cwd: root,
+  env: {
+    ...process.env,
+    GOOS: "linux",
+    GOARCH: "amd64",
+    CGO_ENABLED: "0",
+  },
+  stdio: "inherit",
+});
+if (goResult.status !== 0) {
+  throw new Error("go build failed");
+}
+
 writeExecutable(
   path.join(runtime, "scripts", "start.sh"),
   `#!/usr/bin/env bash
 set -euo pipefail
 DIR="$(cd "$(dirname "\${BASH_SOURCE[0]}")/.." && pwd)"
-node "$DIR/server/index.js"
+"$DIR/bin/docker-manager"
 `,
 );
 writeExecutable(
@@ -86,4 +98,3 @@ echo "Status is controlled by fnOS cmd/main"
 );
 
 console.log(`Prepared runtime at ${runtime}`);
-

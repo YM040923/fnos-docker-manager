@@ -81,7 +81,7 @@ function readText(file) {
 }
 
 function isExecutableRel(rel) {
-  return rel.startsWith("cmd/") || rel.startsWith("scripts/") || rel.endsWith(".sh");
+  return rel === "bin/docker-manager" || rel.startsWith("cmd/") || rel.startsWith("scripts/") || rel.endsWith(".sh");
 }
 
 function makeAppTgz() {
@@ -131,4 +131,3 @@ function main() {
 }
 
 main();
-

@@ -27,7 +27,7 @@ done
 mkdir -p "$WORK/app-extract"
 tar -xzf "$WORK/app.tgz" -C "$WORK/app-extract"
 app_required=(
-  server/index.js shared/defaults.js web/index.html web/styles.css web/app.js
+  bin/docker-manager web/index.html web/styles.css web/app.js
   ui/config ui/images/icon.png ui/images/icon_64.png ui/images/icon_256.png
   scripts/start.sh scripts/stop.sh scripts/status.sh config/env.example README.md package.json
 )
@@ -43,6 +43,7 @@ for script in start.sh stop.sh status.sh; do
   [ -x "$WORK/app-extract/scripts/$script" ] || { echo "runtime script not executable: $script" >&2; exit 1; }
   ! grep -q $'\r' "$WORK/app-extract/scripts/$script" || { echo "runtime script has CRLF: $script" >&2; exit 1; }
 done
+[ -x "$WORK/app-extract/bin/docker-manager" ] || { echo "docker-manager binary is not executable" >&2; exit 1; }
 
 python3 -m json.tool "$WORK/config/privilege" >/dev/null
 python3 -m json.tool "$WORK/config/resource" >/dev/null
