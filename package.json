@@ -1,6 +1,6 @@
 {
   "name": "fnos-docker-manager",
-  "version": "0.1.2",
+  "version": "0.1.3",
   "private": true,
   "type": "module",
   "scripts": {
@@ -11,6 +11,8 @@
     "prepare:fnos:native": "node scripts/prepare-runtime-native.mjs",
     "build:fpk": "bash packaging/fnos/build-fpk.sh",
     "build:fpk:native": "node scripts/build-fpk-native.mjs",
+    "prepare:fnpack": "node scripts/prepare-fnpack-source.mjs",
+    "build:fpk:official": "node scripts/build-fpk-official.mjs",
     "verify:fpk": "bash scripts/verify-fnos-package.sh",
     "verify:fpk:native": "node scripts/verify-fpk-native.mjs"
   },
