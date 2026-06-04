@@ -2,6 +2,7 @@ appname               = App.Native.DockerManager
 version               = __VERSION__
 display_name          = Docker Manager
 desc                  = Docker container startup order and monitoring manager
+platform              = x86
 arch                  = x86_64
 source                = thirdparty
 maintainer            = YM040923

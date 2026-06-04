@@ -8,11 +8,12 @@
     "start": "node src/server/index.js",
     "build:web:fnos": "bash scripts/build-web-fnos.sh",
     "prepare:fnos": "bash scripts/prepare-linux-runtime.sh",
+    "prepare:fnos:native": "node scripts/prepare-runtime-native.mjs",
     "build:fpk": "bash packaging/fnos/build-fpk.sh",
+    "build:fpk:native": "node scripts/build-fpk-native.mjs",
     "verify:fpk": "bash scripts/verify-fnos-package.sh"
   },
   "engines": {
     "node": ">=22"
   }
 }
-

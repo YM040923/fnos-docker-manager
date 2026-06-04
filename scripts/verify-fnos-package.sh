@@ -52,6 +52,7 @@ python3 -m json.tool "$WORK/app-extract/ui/config" >/dev/null
 
 ! grep -q "install_type" "$WORK/manifest" || { echo "manifest contains install_type" >&2; exit 1; }
 ! grep -q "checkport[[:space:]]*=" "$WORK/manifest" || { echo "manifest contains non-template checkport field" >&2; exit 1; }
+grep -Eq "platform[[:space:]]*=[[:space:]]*x86" "$WORK/manifest" || { echo "manifest missing platform x86" >&2; exit 1; }
 grep -q "appname[[:space:]]*=[[:space:]]*App.Native.DockerManager" "$WORK/manifest" || { echo "manifest missing template-style appname" >&2; exit 1; }
 grep -q '"App.Native.DockerManager.Application"' "$WORK/app-extract/ui/config" || { echo "ui config missing app id" >&2; exit 1; }
 grep -q '"gatewaySocket"[[:space:]]*:[[:space:]]*"app.sock"' "$WORK/app-extract/ui/config" || { echo "ui config missing gatewaySocket" >&2; exit 1; }
