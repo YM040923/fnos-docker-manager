@@ -54,16 +54,15 @@ find "$WORK/app/scripts" -type f -name "*.sh" -exec chmod +x {} \;
 
 (
   cd "$WORK"
-  rm -f fnos-docker-manager.fpk
+  rm -f App.Native.DockerManager.fpk
   "$(resolve_fnpack)" build
 )
 
-if [ ! -f "$WORK/fnos-docker-manager.fpk" ]; then
-  echo "fnpack did not produce $WORK/fnos-docker-manager.fpk" >&2
+if [ ! -f "$WORK/App.Native.DockerManager.fpk" ]; then
+  echo "fnpack did not produce $WORK/App.Native.DockerManager.fpk" >&2
   exit 1
 fi
 
 rm -f "$OUT"
-mv "$WORK/fnos-docker-manager.fpk" "$OUT"
+mv "$WORK/App.Native.DockerManager.fpk" "$OUT"
 echo "Built $OUT"
-

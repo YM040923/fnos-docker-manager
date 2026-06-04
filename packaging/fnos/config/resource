@@ -1,2 +1,22 @@
-{}
-
+{
+  "data-share": {
+    "shares": [
+      {
+        "name": "App.Native.DockerManager",
+        "permission": {
+          "rw": [
+            "App.Native.DockerManager"
+          ]
+        }
+      },
+      {
+        "name": "App.Native.DockerManager/data",
+        "permission": {
+          "rw": [
+            "App.Native.DockerManager"
+          ]
+        }
+      }
+    ]
+  }
+}

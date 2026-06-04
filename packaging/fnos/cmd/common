@@ -34,7 +34,7 @@ export DOCKER_MANAGER_LOG_FILE="${DOCKER_MANAGER_LOG_FILE:-$LOG_DIR/service.log}
 export DOCKER_MANAGER_PID_FILE="${DOCKER_MANAGER_PID_FILE:-$RUN_DIR/app.pid}"
 export DOCKER_MANAGER_SOCKET_FILE="${DOCKER_MANAGER_SOCKET_FILE:-$APP_DIR/app.sock}"
 export FNOS_SOCKET_PATH="$DOCKER_MANAGER_SOCKET_FILE"
-export FNOS_GATEWAY_PREFIX="${FNOS_GATEWAY_PREFIX:-/app/fnos-docker-manager}"
+export FNOS_GATEWAY_PREFIX="${FNOS_GATEWAY_PREFIX:-/app/App-Native-DockerManager}"
 export FNOS_DATA_DIR="$VAR_DIR"
 export FNOS_WEB_DIR="${FNOS_WEB_DIR:-$APP_DIR/web}"
 export TRIM_APPDEST="$APP_DIR"
@@ -43,4 +43,3 @@ export TRIM_PKGVAR="$VAR_DIR"
 ensure_runtime_dirs() {
   mkdir -p "$RUN_DIR" "$LOG_DIR"
 }
-

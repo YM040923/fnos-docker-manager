@@ -5,7 +5,9 @@ set -euo pipefail
 source "$(dirname "${BASH_SOURCE[0]}")/common"
 ensure_runtime_dirs
 
-export PATH=/var/apps/nodejs_v22/target/bin:$PATH
+if [ -d /var/apps/nodejs_v22/target/bin ]; then
+  export PATH=/var/apps/nodejs_v22/target/bin:$PATH
+fi
 export NODE_ENV=production
 
 CMD="node $APP_DIR/server/index.js"
@@ -69,4 +71,3 @@ case "${1:-}" in
   status) status_process ;;
   *) exit 1 ;;
 esac
-

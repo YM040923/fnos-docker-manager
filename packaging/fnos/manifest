@@ -1,14 +1,10 @@
-appname               = fnos-docker-manager
+appname               = App.Native.DockerManager
 version               = __VERSION__
 display_name          = Docker Manager
 desc                  = Docker container startup order and monitoring manager
-platform              = x86
 arch                  = x86_64
 source                = thirdparty
 maintainer            = YM040923
 distributor           = YM040923
 desktop_uidir         = ui
-desktop_applaunchname = fnos-docker-manager.Application
-checkport             = false
-install_dep_apps      = nodejs_v22
-
+desktop_applaunchname = App.Native.DockerManager.Application
