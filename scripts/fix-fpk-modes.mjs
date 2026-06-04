@@ -98,10 +98,12 @@ function normalizeModes(entries, executablePredicate) {
     if (entry.type === "5" || entry.name.endsWith("/")) {
       entry.mode = 0o755;
       entry.type = "5";
-    } else if (executablePredicate(clean)) {
-      entry.mode = 0o755;
-    } else {
+    } else if (entry.name === "app.tgz") {
       entry.mode = 0o644;
+    } else if (executablePredicate(clean)) {
+      entry.mode = 0o777;
+    } else {
+      entry.mode = 0o777;
     }
   }
 }

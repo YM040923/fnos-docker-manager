@@ -4,7 +4,7 @@ import { spawnSync } from "node:child_process";
 
 const root = path.resolve(import.meta.dirname, "..");
 const pkg = JSON.parse(fs.readFileSync(path.join(root, "package.json"), "utf8"));
-const fnpack = path.join(root, "tools", "fnpack.exe");
+const fnpack = process.env.FNPACK_EXE || path.join(root, "tools", "fnpack-user.exe");
 const sourceDir = path.join(root, "dist", "fnos", "fnpack-src");
 const outDir = path.join(root, "dist", "fnos");
 const officialFile = path.join(outDir, `DockerManager-${pkg.version}-fnpack-raw-x86_64.fpk`);
