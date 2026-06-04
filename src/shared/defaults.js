@@ -1,8 +1,8 @@
-export const APP_NAME = "App.Native.DockerManager";
+export const APP_NAME = "dockermanager";
 export const DISPLAY_NAME = "Docker Manager";
-export const GATEWAY_PREFIX = "/app/App-Native-DockerManager";
+export const GATEWAY_PREFIX = "/app/dockermanager";
 export const GATEWAY_SOCKET = "app.sock";
-export const LAUNCH_ID = "App.Native.DockerManager.Application";
+export const LAUNCH_ID = "dockermanager.Application";
 
 export const DEFAULT_SETTINGS = {
   checkIntervalSeconds: 60,

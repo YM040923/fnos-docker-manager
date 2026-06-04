@@ -27,6 +27,21 @@ function listFiles(dir, base = dir) {
   return rows.sort((a, b) => a.rel.localeCompare(b.rel));
 }
 
+function listEntries(dir, base = dir) {
+  const rows = [];
+  for (const entry of fs.readdirSync(dir, { withFileTypes: true })) {
+    const full = path.join(dir, entry.name);
+    const rel = path.relative(base, full).replaceAll(path.sep, "/");
+    if (entry.isDirectory()) {
+      rows.push({ full, rel, directory: true });
+      rows.push(...listEntries(full, base));
+    } else if (entry.isFile()) {
+      rows.push({ full, rel });
+    }
+  }
+  return rows.sort((a, b) => a.rel.localeCompare(b.rel));
+}
+
 function writeString(buffer, offset, length, value) {
   const text = Buffer.from(value);
   text.copy(buffer, offset, 0, Math.min(length, text.length));
@@ -65,6 +80,11 @@ function tarHeader(name, size, mode = 0o644, type = "0") {
 function tarGz(entries) {
   const chunks = [];
   for (const entry of entries) {
+    if (entry.directory) {
+      const name = entry.name || entry.rel;
+      chunks.push(tarHeader(name.endsWith("/") ? name : `${name}/`, 0, entry.mode ?? 0o755, "5"));
+      continue;
+    }
     const data = entry.data ?? fs.readFileSync(entry.full);
     const mode = entry.mode ?? (entry.executable ? 0o755 : 0o644);
     chunks.push(tarHeader(entry.name || entry.rel, data.length, mode));
@@ -85,9 +105,9 @@ function isExecutableRel(rel) {
 }
 
 function makeAppTgz() {
-  const entries = listFiles(runtime).map((file) => ({
+  const entries = listEntries(runtime).map((file) => ({
     ...file,
-    executable: isExecutableRel(file.rel),
+    executable: !file.directory && isExecutableRel(file.rel),
   }));
   return tarGz(entries);
 }
@@ -111,6 +131,7 @@ function main() {
     { name: "app.tgz", data: appTgz },
   ];
   for (const folder of ["cmd", "config", "wizard"]) {
+    topEntries.push({ name: `${folder}/`, directory: true, mode: 0o755 });
     for (const file of listFiles(path.join(root, "packaging", "fnos", folder))) {
       topEntries.push({
         name: `${folder}/${file.rel}`,

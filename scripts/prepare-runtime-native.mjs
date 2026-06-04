@@ -38,9 +38,7 @@ copyFile(path.join(root, "src", "web", "styles.css"), path.join(webOut, "styles.
 copyFile(path.join(root, "src", "web", "app.js"), path.join(webOut, "app.js"));
 
 reset(runtime);
-fs.mkdirSync(path.join(runtime, "server"), { recursive: true });
 fs.mkdirSync(path.join(runtime, "bin"), { recursive: true });
-fs.mkdirSync(path.join(runtime, "shared"), { recursive: true });
 fs.mkdirSync(path.join(runtime, "web"), { recursive: true });
 fs.mkdirSync(path.join(runtime, "ui", "images"), { recursive: true });
 fs.mkdirSync(path.join(runtime, "scripts"), { recursive: true });

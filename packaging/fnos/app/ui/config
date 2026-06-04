@@ -1,14 +1,14 @@
 {
   ".url": {
-    "App.Native.DockerManager.Application": {
+    "dockermanager.Application": {
       "title": "Docker Manager",
       "desc": "Docker container startup order and monitoring manager",
       "icon": "images/icon_{0}.png",
       "type": "iframe",
       "protocol": "",
       "gatewaySocket": "app.sock",
-      "gatewayPrefix": "/app/App-Native-DockerManager",
-      "url": "/app/App-Native-DockerManager",
+      "gatewayPrefix": "/app/dockermanager",
+      "url": "/app/dockermanager",
       "allUsers": false
     }
   }

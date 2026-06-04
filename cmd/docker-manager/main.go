@@ -19,7 +19,7 @@ import (
 	"time"
 )
 
-const gatewayPrefix = "/app/fnos-docker-manager"
+const gatewayPrefix = "/app/dockermanager"
 
 type Settings struct {
 	CheckIntervalSeconds       int `json:"checkIntervalSeconds"`
@@ -518,4 +518,3 @@ func atoi(value string, fallback int) int {
 	}
 	return number
 }
-
