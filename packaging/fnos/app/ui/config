@@ -1,0 +1,16 @@
+{
+  ".url": {
+    "fnos-docker-manager.Application": {
+      "title": "Docker Manager",
+      "desc": "Docker container startup order and monitoring manager",
+      "icon": "images/icon_{0}.png",
+      "type": "iframe",
+      "protocol": "",
+      "gatewaySocket": "app.sock",
+      "gatewayPrefix": "/app/fnos-docker-manager",
+      "url": "/app/fnos-docker-manager",
+      "allUsers": false
+    }
+  }
+}
+

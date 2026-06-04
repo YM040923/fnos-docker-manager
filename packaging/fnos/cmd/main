@@ -1,0 +1,72 @@
+#!/usr/bin/env bash
+set -euo pipefail
+
+# shellcheck source=common
+source "$(dirname "${BASH_SOURCE[0]}")/common"
+ensure_runtime_dirs
+
+export PATH=/var/apps/nodejs_v22/target/bin:$PATH
+export NODE_ENV=production
+
+CMD="node $APP_DIR/server/index.js"
+
+log_msg() {
+  echo "$(date '+%Y-%m-%d %H:%M:%S') - $1" >> "$DOCKER_MANAGER_LOG_FILE"
+}
+
+check_process() {
+  local pid="$1"
+  kill -0 "$pid" 2>/dev/null
+}
+
+status_process() {
+  if [ -f "$DOCKER_MANAGER_PID_FILE" ]; then
+    local pid
+    pid="$(head -n 1 "$DOCKER_MANAGER_PID_FILE" | tr -d '[:space:]')"
+    if [ -n "$pid" ] && check_process "$pid"; then
+      return 0
+    fi
+    rm -f "$DOCKER_MANAGER_PID_FILE"
+  fi
+  return 3
+}
+
+start_process() {
+  if status_process; then
+    return 0
+  fi
+  ensure_runtime_dirs
+  rm -f "$DOCKER_MANAGER_SOCKET_FILE"
+  log_msg "Starting Docker Manager"
+  bash -c "$CMD" >> "$DOCKER_MANAGER_LOG_FILE" 2>&1 &
+  printf '%s\n' "$!" > "$DOCKER_MANAGER_PID_FILE"
+}
+
+stop_process() {
+  log_msg "Stopping Docker Manager"
+  if [ -f "$DOCKER_MANAGER_PID_FILE" ]; then
+    local pid
+    pid="$(head -n 1 "$DOCKER_MANAGER_PID_FILE" | tr -d '[:space:]')"
+    if [ -n "$pid" ] && check_process "$pid"; then
+      kill -TERM "$pid" >> "$DOCKER_MANAGER_LOG_FILE" 2>&1 || true
+      local count=0
+      while check_process "$pid" && [ "$count" -lt 10 ]; do
+        sleep 1
+        count=$((count + 1))
+      done
+      if check_process "$pid"; then
+        kill -KILL "$pid" >> "$DOCKER_MANAGER_LOG_FILE" 2>&1 || true
+      fi
+    fi
+    rm -f "$DOCKER_MANAGER_PID_FILE"
+  fi
+  rm -f "$DOCKER_MANAGER_SOCKET_FILE"
+}
+
+case "${1:-}" in
+  start) start_process ;;
+  stop) stop_process ;;
+  status) status_process ;;
+  *) exit 1 ;;
+esac
+

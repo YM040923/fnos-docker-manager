@@ -1,0 +1,18 @@
+{
+  "name": "fnos-docker-manager",
+  "version": "0.1.0",
+  "private": true,
+  "type": "module",
+  "scripts": {
+    "test": "node --test \"src/**/*.test.js\"",
+    "start": "node src/server/index.js",
+    "build:web:fnos": "bash scripts/build-web-fnos.sh",
+    "prepare:fnos": "bash scripts/prepare-linux-runtime.sh",
+    "build:fpk": "bash packaging/fnos/build-fpk.sh",
+    "verify:fpk": "bash scripts/verify-fnos-package.sh"
+  },
+  "engines": {
+    "node": ">=22"
+  }
+}
+
