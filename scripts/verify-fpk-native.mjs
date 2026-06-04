@@ -97,14 +97,14 @@ const manifest = text(requireEntry(top, "manifest"));
 for (const expected of [
   "appname               = dockermanager",
   `version               = ${pkg.version}`,
-  "platform              = x86",
   "arch                  = x86_64",
   "desktop_applaunchname = dockermanager.Application",
-  "checkport             = false",
 ]) {
   if (!manifest.includes(expected)) throw new Error(`Manifest missing: ${expected}`);
 }
 if (manifest.includes("install_type")) throw new Error("Manifest must not contain install_type");
+if (manifest.includes("platform              = x86")) throw new Error("Manifest must not force platform x86");
+if (manifest.includes("checkport             = false")) throw new Error("Manifest must not contain checkport false");
 
 JSON.parse(text(requireEntry(top, "config/privilege")));
 JSON.parse(text(requireEntry(top, "config/resource")));
