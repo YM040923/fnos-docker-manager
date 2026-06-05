@@ -1,4 +1,13 @@
+const pageMeta = {
+  dashboard: ["控制台", "查看 Docker 守护状态、异常容器和最近事件。"],
+  plan: ["启动编排", "编辑容器启动顺序、就绪条件、失败策略和监控开关。"],
+  containers: ["容器管理", "按项目分组查看容器状态，并执行安全操作。"],
+  logs: ["事件日志", "筛选、导出或清空巡检和操作记录。"],
+  settings: ["系统设置", "调整后台守护、保护策略和配置备份。"],
+};
+
 const state = {
+  activeView: "dashboard",
   containers: [],
   config: null,
   monitor: null,
@@ -45,6 +54,12 @@ async function api(path, options = {}) {
   return json;
 }
 
+async function refreshAll() {
+  await loadContainers();
+  await loadMonitor();
+  await loadLogs();
+}
+
 async function loadContainers() {
   setLoading(true);
   try {
@@ -69,7 +84,7 @@ async function loadMonitor() {
   } catch (error) {
     state.monitor = { lastError: error.message };
   }
-  renderOverview();
+  renderDashboard();
 }
 
 async function loadLogs() {
@@ -79,6 +94,7 @@ async function loadLogs() {
     state.logs = [{ time: "", type: "error", message: error.message }];
   }
   renderLogs();
+  renderRecentLogs();
 }
 
 async function loadDetails(id) {
@@ -93,25 +109,80 @@ async function loadDetails(id) {
   renderDetails();
 }
 
+function setView(view) {
+  state.activeView = view;
+  const [title, subtitle] = pageMeta[view] || pageMeta.dashboard;
+  $("pageTitle").textContent = title;
+  $("pageSubtitle").textContent = subtitle;
+  document.querySelectorAll(".view").forEach((section) => {
+    section.classList.toggle("active", section.id === `${view}View`);
+  });
+  document.querySelectorAll(".nav-item").forEach((button) => {
+    button.classList.toggle("active", button.dataset.view === view);
+  });
+}
+
 function render() {
-  renderOverview();
+  setView(state.activeView);
+  renderDashboard();
   renderSettings();
   renderPlan();
   renderInventory();
   renderLogs();
+  renderRecentLogs();
   renderDetails();
 }
 
-function renderOverview() {
+function renderDashboard() {
   const cfg = draftConfig();
+  const running = state.containers.filter((item) => item.state === "running" && !item.missing);
   const bad = state.containers.filter(isProblem);
   const monitored = state.containers.filter((item) => (cfg.containers[item.id]?.monitor ?? item.config?.monitor) !== false);
-  $("dockerState").textContent = state.dockerError ? "不可用" : "正常";
-  $("monitorState").textContent = monitorText();
-  $("containerCount").textContent = String(state.containers.length);
-  $("badCount").textContent = String(bad.length);
-  $("monitoredCount").textContent = String(monitored.length);
-  $("nextCheck").textContent = state.monitor?.nextCheckAt ? formatTime(state.monitor.nextCheckAt) : "-";
+  setText("dockerState", state.dockerError ? "不可用" : "正常");
+  setText("monitorState", monitorText());
+  setText("containerCount", String(state.containers.length));
+  setText("badCount", String(bad.length));
+  setText("monitoredCount", String(monitored.length));
+  setText("runningCount", String(running.length));
+  setText("nextCheck", state.monitor?.nextCheckAt ? formatTime(state.monitor.nextCheckAt) : "-");
+  renderChainSummary();
+  renderProblemList(bad);
+}
+
+function renderChainSummary() {
+  const cfg = draftConfig();
+  const rows = [...state.containers]
+    .sort((a, b) => (cfg.containers[a.id]?.startupOrder ?? 0) - (cfg.containers[b.id]?.startupOrder ?? 0))
+    .slice(0, 8);
+  $("chainSummary").innerHTML =
+    rows.length === 0
+      ? '<div class="empty compact-empty">没有容器。</div>'
+      : rows
+          .map((container) => {
+            const item = cfg.containers[container.id] || container.config || {};
+            return `<div class="chain-row">
+              <span class="order-dot">${numberValue(item.startupOrder, 0)}</span>
+              <strong title="${escapeHtml(container.name)}">${escapeHtml(container.name)}</strong>
+              <span class="status ${escapeHtml(statusClass(container))}">${escapeHtml(statusText(container))}</span>
+            </div>`;
+          })
+          .join("");
+}
+
+function renderProblemList(bad) {
+  $("problemList").innerHTML =
+    bad.length === 0
+      ? '<div class="empty compact-empty">暂无需要处理的容器。</div>'
+      : bad
+          .slice(0, 6)
+          .map(
+            (container) => `<button class="problem-row" type="button" data-id="${escapeHtml(container.id)}">
+              <span class="status ${escapeHtml(statusClass(container))}">${escapeHtml(statusText(container))}</span>
+              <strong title="${escapeHtml(container.name)}">${escapeHtml(container.name)}</strong>
+              <small>${escapeHtml(composeLabel(container))}</small>
+            </button>`,
+          )
+          .join("");
 }
 
 function renderSettings() {
@@ -132,7 +203,6 @@ function renderPlan() {
     if (left !== right) return left - right;
     return a.name.localeCompare(b.name);
   });
-
   $("planRows").innerHTML =
     rows.length === 0
       ? '<div class="empty">没有发现容器。</div>'
@@ -167,7 +237,7 @@ function renderPlanRow(container, cfg) {
           ${option("log", "只记录", item.failurePolicy)}
         </select>
       </label>
-      <label class="switch"><input ${disabled} name="monitor-${escapeHtml(container.id)}" data-field="monitor" type="checkbox" ${item.monitor !== false ? "checked" : ""} /> 监控</label>
+      <label class="switch"><input ${disabled} name="monitor-${escapeHtml(container.id)}" data-field="monitor" type="checkbox" ${item.monitor !== false ? "checked" : ""} />监控</label>
     </div>
   </article>`;
 }
@@ -179,7 +249,6 @@ function renderInventory() {
     $("inventoryRows").innerHTML = "";
     return;
   }
-
   const groups = groupContainers(visible);
   $("inventoryRows").innerHTML = groups
     .map(
@@ -223,15 +292,20 @@ function renderLogs() {
   $("logs").innerHTML =
     logs.length === 0
       ? '<div class="empty compact-empty">暂无日志。</div>'
-      : logs
-          .map(
-            (item) => `<div class="log-item">
-              <time>${escapeHtml(formatTime(item.time) || "")}</time>
-              <span>${escapeHtml(item.type || "event")}</span>
-              <p>${escapeHtml(item.message || "")}</p>
-            </div>`,
-          )
-          .join("");
+      : logs.map(renderLogItem).join("");
+}
+
+function renderRecentLogs() {
+  $("recentLogs").innerHTML =
+    state.logs.length === 0 ? '<div class="empty compact-empty">暂无事件。</div>' : state.logs.slice(0, 5).map(renderLogItem).join("");
+}
+
+function renderLogItem(item) {
+  return `<div class="log-item">
+    <time>${escapeHtml(formatTime(item.time) || "")}</time>
+    <span>${escapeHtml(item.type || "event")}</span>
+    <p>${escapeHtml(item.message || "")}</p>
+  </div>`;
 }
 
 function renderDetails() {
@@ -239,7 +313,6 @@ function renderDetails() {
   const detail = state.details;
   drawer.classList.toggle("hidden", !detail);
   if (!detail) return;
-
   $("detailTitle").textContent = detail.loading ? "正在加载" : detail.name || detail.id;
   $("detailSubtitle").textContent = detail.loading ? "" : detail.image || "";
   if (detail.loading) {
@@ -330,8 +403,8 @@ async function saveConfig() {
       method: "PUT",
       body: JSON.stringify(collectConfig()),
     });
-    showAlert("配置已保存。");
     await loadContainers();
+    showAlert("配置已保存。");
   } catch (error) {
     showAlert(error.message);
   }
@@ -378,6 +451,7 @@ async function clearLogs() {
     await api(route("api/logs/clear"), { method: "POST" });
     state.logs = [];
     renderLogs();
+    renderRecentLogs();
   });
 }
 
@@ -418,12 +492,6 @@ function confirmAction(title, message, confirmText, onConfirm) {
   $("modalMessage").textContent = message;
   $("modalConfirmBtn").textContent = confirmText;
   $("modalBackdrop").classList.remove("hidden");
-}
-
-async function refreshAll() {
-  await loadContainers();
-  await loadMonitor();
-  await loadLogs();
 }
 
 function defaultConfig() {
@@ -521,6 +589,11 @@ function formatTime(value) {
   return date.toLocaleTimeString();
 }
 
+function setText(id, value) {
+  const el = $(id);
+  if (el) el.textContent = value;
+}
+
 function showAlert(message) {
   const el = $("alert");
   el.textContent = message;
@@ -561,9 +634,16 @@ function escapeHtml(value) {
     .replaceAll('"', "&quot;");
 }
 
+document.querySelectorAll(".nav-item").forEach((button) => {
+  button.addEventListener("click", () => setView(button.dataset.view));
+});
+document.querySelectorAll("[data-jump]").forEach((button) => {
+  button.addEventListener("click", () => setView(button.dataset.jump));
+});
 $("refreshBtn").addEventListener("click", refreshAll);
 $("startupBtn").addEventListener("click", runOrderedStartup);
 $("saveBtn").addEventListener("click", saveConfig);
+$("saveSettingsBtn").addEventListener("click", saveConfig);
 $("searchInput").addEventListener("input", (event) => {
   state.filters.query = event.target.value;
   renderInventory();
@@ -600,6 +680,12 @@ $("inventoryRows").addEventListener("click", (event) => {
     return;
   }
   runAction(action, row.dataset.id);
+});
+$("problemList").addEventListener("click", (event) => {
+  const row = event.target.closest("[data-id]");
+  if (!row) return;
+  setView("containers");
+  loadDetails(row.dataset.id);
 });
 $("closeDetailsBtn").addEventListener("click", () => {
   state.details = null;
