@@ -27,26 +27,18 @@ function copyDir(from, to, filter = () => true) {
   }
 }
 
-function writeExecutable(file, content) {
-  fs.mkdirSync(path.dirname(file), { recursive: true });
-  fs.writeFileSync(file, content.replace(/\r?\n/g, "\n"), "utf8");
-}
-
 reset(webOut);
 copyFile(path.join(root, "src", "web", "index.html"), path.join(webOut, "index.html"));
 copyFile(path.join(root, "src", "web", "styles.css"), path.join(webOut, "styles.css"));
 copyFile(path.join(root, "src", "web", "app.js"), path.join(webOut, "app.js"));
 
 reset(runtime);
-fs.mkdirSync(path.join(runtime, "bin"), { recursive: true });
-fs.mkdirSync(path.join(runtime, "web"), { recursive: true });
+fs.mkdirSync(path.join(runtime, "server"), { recursive: true });
+fs.mkdirSync(path.join(runtime, "www"), { recursive: true });
 fs.mkdirSync(path.join(runtime, "ui", "images"), { recursive: true });
-fs.mkdirSync(path.join(runtime, "scripts"), { recursive: true });
 
-copyDir(webOut, path.join(runtime, "web"));
-copyFile(path.join(root, "package.json"), path.join(runtime, "package.json"));
+copyDir(webOut, path.join(runtime, "www"));
 copyFile(path.join(root, "packaging", "fnos", "app", "ui", "config"), path.join(runtime, "ui", "config"));
-copyFile(path.join(root, "packaging", "fnos", "app", "README.md"), path.join(runtime, "README.md"));
 
 const iconResult = spawnSync(process.execPath, [path.join(root, "scripts", "generate-icons.mjs"), path.join(runtime, "ui", "images")], {
   stdio: "inherit",
@@ -56,7 +48,7 @@ if (iconResult.status !== 0) {
 }
 
 const goExe = process.env.GO_EXE || "C:\\Users\\ymzwh\\FrpPilot\\tools\\go\\bin\\go.exe";
-const goResult = spawnSync(goExe, ["build", "-o", path.join(runtime, "bin", "docker-manager"), "./cmd/docker-manager"], {
+const goResult = spawnSync(goExe, ["build", "-o", path.join(runtime, "server", "docker-manager"), "./cmd/docker-manager"], {
   cwd: root,
   env: {
     ...process.env,
@@ -69,28 +61,6 @@ const goResult = spawnSync(goExe, ["build", "-o", path.join(runtime, "bin", "doc
 if (goResult.status !== 0) {
   throw new Error("go build failed");
 }
-
-writeExecutable(
-  path.join(runtime, "scripts", "start.sh"),
-  `#!/usr/bin/env bash
-set -euo pipefail
-DIR="$(cd "$(dirname "\${BASH_SOURCE[0]}")/.." && pwd)"
-"$DIR/bin/docker-manager"
-`,
-);
-writeExecutable(
-  path.join(runtime, "scripts", "stop.sh"),
-  `#!/usr/bin/env bash
-set -euo pipefail
-echo "Stop is controlled by fnOS cmd/main"
-`,
-);
-writeExecutable(
-  path.join(runtime, "scripts", "status.sh"),
-  `#!/usr/bin/env bash
-set -euo pipefail
-echo "Status is controlled by fnOS cmd/main"
-`,
-);
+fs.rmSync(path.join(runtime, "ui", "images", "icon.png"), { force: true });
 
 console.log(`Prepared runtime at ${runtime}`);

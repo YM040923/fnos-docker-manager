@@ -1,13 +1,51 @@
 #!/usr/bin/env bash
 set -euo pipefail
 
-# shellcheck source=common
-source "$(dirname "${BASH_SOURCE[0]}")/common"
+resolve_path() {
+  local input="$1"
+  if [ -d "$input" ]; then
+    cd "$input" && pwd
+    return
+  fi
+  case "$input" in
+    /*) printf '%s\n' "$input" ;;
+    *) printf '%s/%s\n' "$(pwd)" "$input" ;;
+  esac
+}
+
+resolve_package_base() {
+  if [ -n "${TRIM_APPDEST:-}" ]; then
+    resolve_path "$TRIM_APPDEST"
+    return
+  fi
+  cd "$(dirname "${BASH_SOURCE[0]}")/.." && pwd
+}
+
+PACKAGE_BASE="$(resolve_package_base)"
+APP_DIR="$(resolve_path "${DOCKER_MANAGER_APP_DIR:-${TRIM_APPDEST:-$PACKAGE_BASE}}")"
+VAR_DIR="$(resolve_path "${DOCKER_MANAGER_VAR_DIR:-${TRIM_PKGVAR:-$PACKAGE_BASE/var}}")"
+RUN_DIR="$VAR_DIR/run"
+LOG_DIR="$VAR_DIR/logs"
+
+export DOCKER_MANAGER_LOG_FILE="${DOCKER_MANAGER_LOG_FILE:-$LOG_DIR/service.log}"
+export DOCKER_MANAGER_PID_FILE="${DOCKER_MANAGER_PID_FILE:-$RUN_DIR/app.pid}"
+export DOCKER_MANAGER_SOCKET_FILE="${DOCKER_MANAGER_SOCKET_FILE:-$APP_DIR/app.sock}"
+export FNOS_SOCKET_PATH="$DOCKER_MANAGER_SOCKET_FILE"
+export FNOS_GATEWAY_PREFIX="${FNOS_GATEWAY_PREFIX:-/app/dockermanager}"
+export FNOS_DATA_DIR="$VAR_DIR"
+export FNOS_WEB_DIR="${FNOS_WEB_DIR:-$APP_DIR/www}"
+export TRIM_APPDEST="$APP_DIR"
+export TRIM_PKGVAR="$VAR_DIR"
+
+ensure_runtime_dirs() {
+  mkdir -p "$RUN_DIR" "$LOG_DIR"
+}
+
 ensure_runtime_dirs
 
 export NODE_ENV=production
 
-CMD="$APP_DIR/bin/docker-manager"
+CMD="$APP_DIR/server/docker-manager"
 
 log_msg() {
   echo "$(date '+%Y-%m-%d %H:%M:%S') - $1" >> "$DOCKER_MANAGER_LOG_FILE"

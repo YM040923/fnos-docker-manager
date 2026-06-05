@@ -60,9 +60,6 @@ for (const name of [
   "config",
   "config/resource",
   "wizard",
-  "wizard/install",
-  "wizard/uninstall",
-  "cmd/common",
   "cmd/main",
   "cmd/install_init",
   "cmd/install_callback",
@@ -79,7 +76,6 @@ for (const name of [
 }
 
 for (const name of [
-  "cmd/common",
   "cmd/main",
   "cmd/install_init",
   "cmd/install_callback",
@@ -108,36 +104,26 @@ if (manifest.includes("checkport             = false")) throw new Error("Manifes
 
 JSON.parse(text(requireEntry(top, "config/privilege")));
 JSON.parse(text(requireEntry(top, "config/resource")));
-JSON.parse(text(requireEntry(top, "wizard/install")));
-JSON.parse(text(requireEntry(top, "wizard/uninstall")));
 
 const appTgzPath = path.join(path.dirname(fpk), ".verify-app.tgz");
 fs.writeFileSync(appTgzPath, requireEntry(top, "app.tgz").body);
 try {
   const app = parseTarGz(appTgzPath);
   for (const name of [
-    "bin",
-    "bin/docker-manager",
-    "scripts",
-    "scripts/start.sh",
-    "scripts/status.sh",
-    "scripts/stop.sh",
+    "server",
+    "server/docker-manager",
     "ui",
     "ui/config",
-    "ui/images/icon.png",
     "ui/images/icon_64.png",
     "ui/images/icon_256.png",
-    "web",
-    "web/index.html",
-    "web/styles.css",
-    "web/app.js",
+    "www",
+    "www/index.html",
+    "www/styles.css",
+    "www/app.js",
   ]) {
     requireEntry(app, name);
   }
-  requireExecutable(app, "bin/docker-manager");
-  requireExecutable(app, "scripts/start.sh");
-  requireExecutable(app, "scripts/status.sh");
-  requireExecutable(app, "scripts/stop.sh");
+  requireExecutable(app, "server/docker-manager");
   const uiConfig = JSON.parse(text(requireEntry(app, "ui/config")));
   const entry = uiConfig[".url"]?.["dockermanager.Application"];
   if (!entry) throw new Error("UI config missing dockermanager.Application");

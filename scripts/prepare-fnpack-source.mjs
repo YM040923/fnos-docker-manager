@@ -37,6 +37,5 @@ fs.writeFileSync(manifestPath, manifest.replace(/\r?\n/g, "\n"), "utf8");
 
 copyFile(path.join(runtimeDir, "ui", "images", "icon_64.png"), path.join(outDir, "ICON.PNG"));
 copyFile(path.join(runtimeDir, "ui", "images", "icon_256.png"), path.join(outDir, "ICON_256.PNG"));
-fs.writeFileSync(path.join(outDir, "LICENSE"), "Private application package for fnOS.\n", "utf8");
 
 console.log(`Prepared fnpack source at ${outDir}`);

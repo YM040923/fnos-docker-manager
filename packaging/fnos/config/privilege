@@ -1,6 +1,6 @@
 {
-  "defaults": {
+  "defaults":
+  {
     "run-as": "package"
-  },
-  "capabilities": []
+  }
 }
