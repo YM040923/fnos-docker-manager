@@ -86,6 +86,23 @@ createProbe("dockermanager-platform", (app) => {
   ]);
 });
 
+createProbe("docker-manager-meta", (app) => {
+  replaceInFile(path.join(app, "manifest"), [
+    ["App.Native.ProbeInstall", "dockermanager"],
+    ["version               = 1.0.0", "version               = 0.1.5"],
+    ["display-name", "Docker Manager"],
+    ["app-description", "Docker container startup order and monitoring manager"],
+    ["your-name", "YM040923"],
+  ]);
+  replaceInFile(path.join(app, "app", "ui", "config"), [
+    ["App.Native.ProbeInstall.Application", "dockermanager.Application"],
+    ["App.Native.ProbeInstall", "Docker Manager"],
+  ]);
+  replaceInFile(path.join(app, "config", "resource"), [
+    ["App.Native.ProbeInstall", "dockermanager"],
+  ]);
+});
+
 run(process.execPath, [path.join(root, "scripts", "prepare-runtime-native.mjs")]);
 run(process.execPath, [path.join(root, "scripts", "prepare-fnpack-source.mjs")]);
 const templateManifestSource = path.join(dist, "fnpack-src-template-manifest");

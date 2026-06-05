@@ -42,12 +42,10 @@ fs.mkdirSync(path.join(runtime, "bin"), { recursive: true });
 fs.mkdirSync(path.join(runtime, "web"), { recursive: true });
 fs.mkdirSync(path.join(runtime, "ui", "images"), { recursive: true });
 fs.mkdirSync(path.join(runtime, "scripts"), { recursive: true });
-fs.mkdirSync(path.join(runtime, "config"), { recursive: true });
 
 copyDir(webOut, path.join(runtime, "web"));
 copyFile(path.join(root, "package.json"), path.join(runtime, "package.json"));
 copyFile(path.join(root, "packaging", "fnos", "app", "ui", "config"), path.join(runtime, "ui", "config"));
-copyFile(path.join(root, "packaging", "fnos", "app", "config", "env.example"), path.join(runtime, "config", "env.example"));
 copyFile(path.join(root, "packaging", "fnos", "app", "README.md"), path.join(runtime, "README.md"));
 
 const iconResult = spawnSync(process.execPath, [path.join(root, "scripts", "generate-icons.mjs"), path.join(runtime, "ui", "images")], {

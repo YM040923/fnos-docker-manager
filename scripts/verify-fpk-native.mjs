@@ -118,8 +118,6 @@ try {
   for (const name of [
     "bin",
     "bin/docker-manager",
-    "config",
-    "config/env.example",
     "scripts",
     "scripts/start.sh",
     "scripts/status.sh",
