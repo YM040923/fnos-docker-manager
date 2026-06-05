@@ -1,96 +1,126 @@
-# fnOS Docker Manager Implementation Plan
+# Docker Manager 0.2.0 Implementation Plan
 
 > **For agentic workers:** REQUIRED SUB-SKILL: Use superpowers:subagent-driven-development (recommended) or superpowers:executing-plans to implement this plan task-by-task. Steps use checkbox (`- [ ]`) syntax for tracking.
 
-**Goal:** Build a new fnOS native Docker Manager that installs through App Center, opens through the unified gateway, discovers Docker containers, persists startup/monitoring configuration, and enforces order-aware startup and monitoring.
+**Goal:** Build a polished fnOS native Docker guard console with order-aware monitoring, richer container inventory, safer actions, config import/export, and a redesigned UI.
 
-**Architecture:** Use a zero-production-dependency Node.js app: built-in HTTP server on `${TRIM_APPDEST}/app.sock`, Docker Engine API over `/var/run/docker.sock`, JSON persistence under `${TRIM_PKGVAR}`, and a static HTML/CSS/JS UI. Package with a clean `packaging/fnos` template copied into `dist/fnos/fpk-work`, then run `fnpack build` and a strict verifier.
+**Architecture:** Keep the proven fnOS package structure and Go native server. Extend `cmd/docker-manager/main.go` for Docker metadata, config version 2, log management, stale entries, and protected actions. Rebuild the static UI in `src/web/*` around an operations-console layout while keeping `/app/dockermanager` gateway-safe asset and API paths.
 
-**Tech Stack:** Node.js 22 ESM, Node built-in test runner, vanilla HTML/CSS/JS, bash packaging scripts, fnOS unified gateway, Unix sockets.
+**Tech Stack:** Go standard library, Docker Engine HTTP API over Unix socket, vanilla HTML/CSS/JS, official fnpack build scripts, Chrome preview verification.
 
 ---
 
-### Task 1: Project Skeleton
+## File Responsibilities
+
+- `cmd/docker-manager/main.go`: runtime server, Docker API client, config normalization, monitor loop, action endpoints.
+- `cmd/docker-manager/main_test.go`: focused Go tests for config migration, discovery metadata, stale entries, readiness, protected actions.
+- `src/web/index.html`: static console structure.
+- `src/web/app.js`: client state, API calls, filters, editing, details drawer, confirmations, import/export.
+- `src/web/styles.css`: compact fnOS-window-friendly layout.
+- `package.json`: version bump to `0.2.0`.
+- `docs/superpowers/specs/2026-06-05-fnos-docker-manager-design.md`: approved product design.
+
+---
+
+### Task 1: Backend Data Model And Tests
 
 **Files:**
-- Create: `package.json`
-- Create: `.gitignore`
-- Create: `src/shared/defaults.js`
+- Modify: `cmd/docker-manager/main.go`
+- Create: `cmd/docker-manager/main_test.go`
+- Modify: `package.json`
 
-- [ ] Add npm scripts for test, web build, runtime preparation, fpk build, and verification.
-- [ ] Define default settings and app constants in `src/shared/defaults.js`.
-- [ ] Run `npm test` and confirm the empty test suite exits cleanly once tests exist.
+- [ ] Add config version 2 fields: `AutoRunOnStart`, `ProtectManagerContainers`, `LogRetentionLines`, `Name`, `Image`, `ReadinessMode`, `FailurePolicy`.
+- [ ] Write tests proving old version 1 config migrates to version 2 defaults.
+- [ ] Write tests proving invalid readiness/failure values normalize to `auto` and `retry`.
+- [ ] Bump `package.json` from `0.1.11` to `0.2.0`.
+- [ ] Run `go test ./...` and confirm tests pass.
 
-### Task 2: Core Server Modules
-
-**Files:**
-- Create: `src/server/config-store.js`
-- Create: `src/server/activity-log.js`
-- Create: `src/server/docker-client.js`
-- Create: `src/server/startup-engine.js`
-- Create: `src/server/http-app.js`
-- Create: `src/server/index.js`
-- Test: `src/server/startup-engine.test.js`
-- Test: `src/server/config-store.test.js`
-
-- [ ] Write tests for default config creation and clamped settings.
-- [ ] Write tests for order-aware startup stopping at the first unresolved dependency.
-- [ ] Implement config persistence, Docker API wrapper, startup engine, routes, and Unix socket boot.
-- [ ] Run `npm test`.
-
-### Task 3: Static UI
+### Task 2: Docker Inventory And Stale Config Entries
 
 **Files:**
-- Create: `src/web/index.html`
-- Create: `src/web/styles.css`
-- Create: `src/web/app.js`
+- Modify: `cmd/docker-manager/main.go`
+- Modify: `cmd/docker-manager/main_test.go`
 
-- [ ] Build a dashboard-first UI with containers, startup plan, logs, and settings sections.
-- [ ] Implement API calls for refresh, save config, ordered startup, and manual container actions.
-- [ ] Add empty, loading, Docker unavailable, and error states.
-- [ ] Run a local preview against the Node server and inspect the UI.
+- [ ] Extend container JSON with running, missing, protected, created, ports, mounts, networks, compose project/service, and config fields.
+- [ ] Parse Docker list response labels, ports, mounts, created timestamp, and network names without exposing env secrets.
+- [ ] Store discovered name/image into config on merge.
+- [ ] Return stale configured entries as `missing: true`.
+- [ ] Write tests for discovered metadata merge and stale entry output.
+- [ ] Run `go test ./...`.
 
-### Task 4: fnOS Package Template
-
-**Files:**
-- Create: `packaging/fnos/manifest`
-- Create: `packaging/fnos/config/privilege`
-- Create: `packaging/fnos/config/resource`
-- Create: `packaging/fnos/wizard/install`
-- Create: `packaging/fnos/wizard/uninstall`
-- Create: `packaging/fnos/cmd/common`
-- Create: all required lifecycle scripts under `packaging/fnos/cmd`
-- Create: `packaging/fnos/app/ui/config`
-- Create: `packaging/fnos/app/config/env.example`
-- Create: `packaging/fnos/app/README.md`
-
-- [ ] Match FrpPilot's successful native package shape.
-- [ ] Use unified gateway fields and `checkport = false`.
-- [ ] Keep install scripts lightweight and avoid appdata writes before runtime startup.
-
-### Task 5: Build and Verify Scripts
+### Task 3: Order-Aware Engine Improvements
 
 **Files:**
-- Create: `scripts/build-web-fnos.sh`
-- Create: `scripts/prepare-linux-runtime.sh`
-- Create: `packaging/fnos/build-fpk.sh`
-- Create: `scripts/verify-fnos-package.sh`
-- Create: `scripts/generate-icons.mjs`
+- Modify: `cmd/docker-manager/main.go`
+- Modify: `cmd/docker-manager/main_test.go`
 
-- [ ] Generate real PNG icons at required sizes.
-- [ ] Copy server, web, UI config, scripts, and metadata into `dist/fnos/runtime`.
-- [ ] Build `.fpk` from a clean temporary work directory.
-- [ ] Verify package structure, JSON, line endings, executable bits, gateway config, and `cmd/main status`.
+- [ ] Add readiness mode logic: `auto`, `running`, `healthy`.
+- [ ] Add failure policy logic: `retry`, `log`.
+- [ ] Treat missing containers as blocked and stop the chain.
+- [ ] Restart unhealthy running containers only when policy is `retry`.
+- [ ] Keep one operation lock for manual startup and monitor startup.
+- [ ] Write tests for missing container blocking, running-only readiness, and log-only unhealthy policy.
+- [ ] Run `go test ./...`.
 
-### Task 6: Final Validation
+### Task 4: Safety And Operations APIs
+
+**Files:**
+- Modify: `cmd/docker-manager/main.go`
+- Modify: `cmd/docker-manager/main_test.go`
+
+- [ ] Add `GET /api/containers/:id/details`.
+- [ ] Add `POST /api/logs/clear`.
+- [ ] Block stop/restart actions for protected containers.
+- [ ] Return structured errors with stable codes for protected, not found, Docker unavailable, and bad JSON.
+- [ ] Trim activity logs to `logRetentionLines` after writes.
+- [ ] Write tests for protected action blocking and log clearing helper behavior.
+- [ ] Run `go test ./...`.
+
+### Task 5: Redesigned UI Shell
+
+**Files:**
+- Modify: `src/web/index.html`
+- Modify: `src/web/styles.css`
+- Modify: `src/web/app.js`
+
+- [ ] Replace the current page with overview, startup plan, inventory, details drawer, settings, and events sections.
+- [ ] Preserve all existing gateway-safe absolute asset paths.
+- [ ] Add empty, loading, Docker unavailable, and busy operation states.
+- [ ] Add search and filters for all/running/problem/stopped/missing/monitored.
+- [ ] Add Compose project grouping.
+- [ ] Run `node --check src/web/app.js`.
+
+### Task 6: UI Editing And Safety Interactions
+
+**Files:**
+- Modify: `src/web/app.js`
+- Modify: `src/web/styles.css`
+
+- [ ] Add editable order, delay, monitor, readiness mode, and failure policy controls.
+- [ ] Ensure filtered-out rows never lose draft config.
+- [ ] Add details drawer loading from `/api/containers/:id/details`.
+- [ ] Add confirmation modal for stop, restart, clear logs, and config import.
+- [ ] Add config export/import and log export.
+- [ ] Run `node --check src/web/app.js`.
+
+### Task 7: Preview Verification
+
+**Files:**
+- Update temporary preview server under `C:\tmp\fnos-dm-preview-server.mjs` for local verification only.
+
+- [ ] Mock the expanded API responses.
+- [ ] Open `http://127.0.0.1:41731/app/dockermanager` in Chrome.
+- [ ] Verify dashboard, filters, group toggle, detail drawer, save, import/export, logs clear/export, confirmation modal, and narrow viewport.
+- [ ] Confirm browser console has no errors.
+
+### Task 8: Build, Verify, Commit
 
 **Files:**
 - Modify as needed based on verification output.
 
 - [ ] Run `npm test`.
-- [ ] Run `bash scripts/build-web-fnos.sh`.
-- [ ] Run WSL runtime preparation.
-- [ ] Run WSL fpk build.
-- [ ] Run WSL package verification.
-- [ ] Commit the implementation.
-
+- [ ] Run `node --check src/web/app.js`.
+- [ ] Run `go test ./...`.
+- [ ] Run `npm run build:fpk:official`.
+- [ ] Run `npm run verify:fpk:native -- C:\Users\ymzwh\Code\fnos-docker-manager\dist\fnos\DockerManager-0.2.0-fnpack-fixed-x86_64.fpk`.
+- [ ] Commit with `feat: redesign docker manager console`.

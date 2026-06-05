@@ -1,413 +1,198 @@
-# fnOS Docker Manager Design
+# fnOS Docker Manager 0.2.0 Design
 
 ## Goal
 
-Build a new fnOS native Docker Manager from scratch. It must provide the same practical value as the previous Docker Manager project: discover containers on the NAS, configure startup order, start containers in dependency order, continuously monitor them, and provide a local management UI. The package must be a real fnOS native app using the unified gateway and Unix socket model, not a Docker Compose deployment and not a web app with an exposed port.
+Turn Docker Manager from a basic startup-order page into a practical fnOS native container guard console. The app should help the NAS recover container services in the right order after boot or failure, show enough Docker state for daily decisions, and keep dangerous operations explicit.
+
+The product is not a full replacement for the fnOS Docker app. It focuses on order-aware startup, monitoring, and operational visibility.
+
+## Product Shape
+
+The first screen is the working console:
+
+- Overview: Docker access, monitor state, next check, unhealthy/stopped count, monitored count.
+- Startup Plan: ordered dependency list, readiness mode, retry policy, delay, monitor toggle.
+- Containers: searchable and filterable inventory grouped by Compose project where available.
+- Details: selected container metadata such as ports, mounts, networks, image, status, and latest action result.
+- Events: action and monitor logs with filtering, clear, and export.
+- Settings: intervals, timeout, startup behavior, protection behavior, import/export configuration.
 
 ## Non-Goals
 
-- Do not reuse the previous Docker Manager package structure.
-- Do not include Manus OAuth, MySQL, Docker Compose deployment, or a separate web port.
-- Do not add nonstandard manifest fields such as `install_type = root` or extra desktop fields that are not present in the official template or the known-good FrpPilot package.
-- Do not depend on Docker Hub or any external registry at runtime.
-- Do not require the user to edit terminal configuration files for normal use.
-
-## Reference Rules
-
-The implementation must follow this order of trust:
-
-1. A fresh `fnpack create <appname>` template.
-2. The official fnOS developer documentation mirrored in `ckcoding/fnnas-docs`.
-3. The known-good FrpPilot fnOS package structure and verification script.
-4. Project-specific requirements in this spec.
-
-`fnpack build` success is not enough. The package must pass a repository verification script before it is considered deliverable, and final validation should use `appcenter-cli install-fpk` on the NAS when available.
-
-## App Identity
-
-- Package name: `fnos-docker-manager`
-- Display name: `Docker Manager`
-- Gateway prefix: `/app/fnos-docker-manager`
-- Gateway socket: `app.sock`
-- Launch entry id: `fnos-docker-manager.Application`
-- Initial version: `0.1.0`
-
-Versions must be bumped for every installable test package after the first NAS install attempt, so App Center does not confuse old and new packages.
-
-## Package Structure
-
-The source tree should contain:
-
-```text
-fnos-docker-manager/
-  package.json
-  pnpm-lock.yaml
-  src/
-    server/
-    web/
-    shared/
-  packaging/
-    fnos/
-      manifest
-      config/
-        privilege
-        resource
-      wizard/
-        install
-        uninstall
-      cmd/
-        common
-        main
-        install_init
-        install_callback
-        uninstall_init
-        uninstall_callback
-        upgrade_init
-        upgrade_callback
-        config_init
-        config_callback
-      app/
-        bin/
-        web/
-        ui/
-          config
-          images/
-            icon.png
-            icon_64.png
-            icon_256.png
-        scripts/
-          start.sh
-          stop.sh
-          status.sh
-        config/
-          env.example
-        README.md
-      ICON.PNG
-      ICON_256.PNG
-      build-fpk.sh
-  scripts/
-    build-web-fnos.sh
-    prepare-linux-runtime.sh
-    verify-fnos-package.sh
-```
-
-The final `.fpk` must contain:
-
-```text
-manifest
-app.tgz
-config/privilege
-config/resource
-wizard/install
-wizard/uninstall
-cmd/common
-cmd/main
-cmd/install_init
-cmd/install_callback
-cmd/uninstall_init
-cmd/uninstall_callback
-cmd/upgrade_init
-cmd/upgrade_callback
-cmd/config_init
-cmd/config_callback
-ICON.PNG
-ICON_256.PNG
-```
-
-`app.tgz` must contain the runtime app contents expected by `TRIM_APPDEST`, including `web`, `ui`, `scripts`, `config`, and server executable/runtime files. The exact internal layout should be generated from the same shape as the `fnpack create` template and verified by `scripts/verify-fnos-package.sh`.
-
-## Manifest
-
-The manifest should follow the known-good native pattern:
-
-```text
-appname               = fnos-docker-manager
-version               = 0.1.0
-display_name          = Docker Manager
-desc                  = Docker container startup order and monitoring manager
-platform              = x86
-arch                  = x86_64
-source                = thirdparty
-maintainer            = YM040923
-distributor           = YM040923
-desktop_uidir         = ui
-desktop_applaunchname = fnos-docker-manager.Application
-checkport             = false
-```
-
-If Node.js runtime is used from fnOS, add only the documented dependency field:
-
-```text
-install_dep_apps      = nodejs_v22
-```
-
-No independent service port should be declared for the UI.
-
-## Unified Gateway UI
-
-`packaging/fnos/app/ui/config` must use:
-
-```json
-{
-  ".url": {
-    "fnos-docker-manager.Application": {
-      "title": "Docker Manager",
-      "desc": "Docker container startup order and monitoring manager",
-      "icon": "images/icon_{0}.png",
-      "type": "iframe",
-      "protocol": "",
-      "gatewaySocket": "app.sock",
-      "gatewayPrefix": "/app/fnos-docker-manager",
-      "url": "/app/fnos-docker-manager",
-      "allUsers": false
-    }
-  }
-}
-```
-
-The frontend build must use `/app/fnos-docker-manager` as its base path. All asset URLs must work behind the unified gateway. There should be no hardcoded `localhost`, `127.0.0.1`, `:13000`, or similar port URL in production code.
+- Do not create or delete containers, images, volumes, or networks in this version.
+- Do not edit Docker Compose files.
+- Do not expose a TCP management port.
+- Do not add MySQL, OAuth, Docker Hub, or external runtime dependencies.
+- Do not change the known-good fnOS package layout unless package verification requires it.
 
 ## Runtime Architecture
 
-Use a small server process that listens on a Unix socket:
+Use the current successful native architecture:
 
-```text
-${TRIM_APPDEST}/app.sock
-```
+- Go server binary from `cmd/docker-manager/main.go`.
+- Unix socket listener at `${TRIM_APPDEST}/app.sock`.
+- Static UI under the fnOS unified gateway prefix `/app/dockermanager`.
+- Docker Engine API over `/var/run/docker.sock`.
+- JSON config at `${TRIM_PKGVAR}/config.json`.
+- JSONL activity log at `${TRIM_PKGVAR}/logs/activity.log`.
 
-The `cmd/main` lifecycle script controls this server:
-
-- `start`: create runtime directories, remove stale socket, start the server, write PID.
-- `stop`: terminate the PID, remove socket.
-- `status`: return `0` when running and `3` when stopped.
-
-Runtime paths:
-
-```text
-TRIM_APPDEST/app.sock
-TRIM_PKGVAR/config.json
-TRIM_PKGVAR/logs/activity.log
-TRIM_PKGVAR/run/app.pid
-```
-
-`install_init` and `install_callback` must avoid writing to appdata unless verified against the official template. Directory creation should happen in `main start` and runtime scripts, where App Center has prepared app paths.
-
-## Server Technology
-
-Use Node.js 22 with a minimal dependency set:
-
-- HTTP server: Node built-in `http` or Express.
-- Docker access: Docker Engine HTTP API over `/var/run/docker.sock`; avoid heavy abstractions unless they clearly reduce risk.
-- Persistence: JSON file in `TRIM_PKGVAR/config.json`.
-- Logs: append-only text or JSONL in `TRIM_PKGVAR/logs/activity.log`.
-
-Avoid native Node modules in the first version. Do not use SQLite or MySQL. This keeps WSL/fnOS packaging simple and avoids native ABI issues.
-
-## Docker Access
-
-The app needs read and control access to the Docker daemon. It should first attempt to talk to:
-
-```text
-/var/run/docker.sock
-```
-
-If access fails, the UI must show a clear error state explaining that Docker socket access is unavailable under the current fnOS app permissions. This is a product state, not a crash.
-
-The first implementation may use `run-as: package` in `config/privilege`. If this cannot access Docker on fnOS, the app must not silently switch to nonstandard root manifest fields. Instead, document the limitation and evaluate the official fnOS-supported privileged integration path.
+The package remains built by the official fnpack path already proven installable. The package structure, manifest shape, gateway config, icon names, and `run-as: root` privilege must remain compatible with the successful install path.
 
 ## Data Model
 
-`config.json` should be versioned:
+Config remains versioned and backward compatible:
 
 ```json
 {
-  "version": 1,
+  "version": 2,
   "settings": {
     "checkIntervalSeconds": 60,
     "startupRetryDelaySeconds": 10,
-    "startupTimeoutSeconds": 120
+    "startupTimeoutSeconds": 120,
+    "autoRunOnStart": true,
+    "protectManagerContainers": true,
+    "logRetentionLines": 500
   },
   "containers": {
-    "container-name": {
+    "container-id": {
       "enabled": true,
-      "startupOrder": 10,
+      "name": "moviepilot",
+      "image": "jxxghp/moviepilot-v2:latest",
+      "startupOrder": 20,
       "startupDelaySeconds": 5,
-      "monitor": true
+      "monitor": true,
+      "readinessMode": "auto",
+      "failurePolicy": "retry"
     }
   }
 }
 ```
 
-Discovered containers that are not in config should appear in the UI with default values:
+Backward compatibility rules:
 
-- `enabled`: `true`
-- `startupOrder`: next available order
-- `startupDelaySeconds`: `0`
-- `monitor`: `true`
+- Missing version or version `1` is normalized into version `2`.
+- Missing `readinessMode` becomes `auto`.
+- Missing `failurePolicy` becomes `retry`.
+- Missing `autoRunOnStart` defaults to `true`.
+- Missing `protectManagerContainers` defaults to `true`.
+- Missing `logRetentionLines` defaults to `500`.
 
-Container identity should prefer Docker container ID internally, but display the human-readable name. The config should tolerate renamed containers by showing unknown/stale entries separately instead of deleting them automatically.
+## Container Discovery
 
-## Startup Order Semantics
+`GET /api/containers` returns discovered containers plus stale configured entries.
 
-Startup order is ascending numeric order. Lower numbers start first.
+For discovered containers, the API should include:
 
-For ordered startup:
+- id, name, image, state, status, health
+- running boolean
+- missing boolean
+- protected boolean
+- created timestamp when available
+- ports summary
+- mounts summary
+- networks summary
+- compose project and compose service labels when available
+- configured startup/monitor metadata from config
 
-1. Sort enabled containers by `startupOrder`, then by name.
-2. For each container, ensure it is running.
-3. If the current container is not running, attempt to start it.
-4. Wait until Docker reports it as running and healthy enough to continue.
-5. If it fails, retry the same container after `startupRetryDelaySeconds`.
-6. Do not proceed to later containers until the current one is running.
-7. After success, wait `startupDelaySeconds`, then continue to the next container.
+For stale configured entries, return `missing: true`, display the saved name/image when available, and avoid deleting the entry automatically.
 
-Health decision:
+## Startup And Monitoring Semantics
 
-- If the container has Docker health status, treat `healthy` as ready.
-- If it has no health check, treat `running` as ready.
-- If it is `unhealthy`, keep retrying according to policy.
+Startup order is ascending. Lower numbers are dependencies of later numbers.
 
-## Monitoring Semantics
+For each enabled container in order:
 
-Periodic monitoring must preserve dependency order. On each tick:
+1. Inspect the container.
+2. If it is missing, stop the chain and record a blocked result.
+3. If it is stopped, start it.
+4. If it is running but unhealthy and the failure policy is `retry`, restart it.
+5. Wait until ready before continuing.
+6. Readiness mode:
+   - `auto`: Docker health check must be healthy when present; otherwise running is enough.
+   - `running`: running is enough.
+   - `healthy`: health status must be healthy.
+7. If the current container cannot become ready before timeout, stop later work and report the blocked container.
+8. After ready, wait `startupDelaySeconds`, then continue.
 
-1. Read configured containers in ascending startup order.
-2. Ensure each monitored container is running before checking later containers.
-3. If an earlier container is stopped or unhealthy, focus retries on it.
-4. Do not restart later containers while an earlier dependency is unresolved.
-5. Record each action and failure to the activity log.
+Background monitoring must use the same chain and a single operation lock. Manual ordered startup and background monitor cannot run concurrently. Single-container actions are allowed, but the UI must clearly show when an ordered operation is running.
 
-Manual actions in the UI should be available, but automatic monitoring should remain order-aware.
+On app start, if `autoRunOnStart` is enabled, the monitor loop should run a first order-aware pass immediately.
 
-## UI Design
+## Safety
 
-The first screen should be the actual management surface, not a landing page.
+The app has Docker control access, so the product must make dangerous actions deliberate:
 
-Primary views:
-
-- Dashboard: Docker access status, monitored container count, unhealthy/stopped count, last check time.
-- Containers: table/list with name, image, status, health, order, delay, monitor toggle, manual actions.
-- Startup Plan: editable ordered list for dependency management.
-- Logs: recent app actions and Docker errors.
-- Settings: check interval, retry delay, startup timeout.
-
-Expected actions:
-
-- Refresh container discovery.
-- Save order/settings.
-- Start selected container.
-- Stop selected container.
-- Restart selected container.
-- Run ordered startup now.
-- Enable or disable monitoring per container.
-
-UI must include empty, loading, Docker unavailable, save success, save failure, and long log states. It must be usable inside the fnOS iframe and not assume a large desktop viewport.
+- Stop and restart require confirmation in the UI.
+- Log clear requires confirmation.
+- Config import shows a validation result before saving.
+- Protected containers cannot be stopped or restarted from this app.
+- Names containing `docker-manager` are protected by default.
+- Missing containers are never auto-removed from config.
+- API errors must be structured and visible in the UI.
 
 ## API Surface
 
-Use simple JSON endpoints under the gateway:
+Required endpoints:
 
 ```text
 GET  /api/health
-GET  /api/containers
 GET  /api/config
 PUT  /api/config
+GET  /api/containers
+GET  /api/containers/:id/details
 POST /api/actions/refresh
 POST /api/actions/startup-run
+GET  /api/monitor
+GET  /api/logs
+POST /api/logs/clear
 POST /api/containers/:id/start
 POST /api/containers/:id/stop
 POST /api/containers/:id/restart
-GET  /api/logs
 ```
 
-All API handlers must return structured errors:
+All endpoints return JSON. Errors use:
 
 ```json
 {
   "error": {
     "code": "DOCKER_UNAVAILABLE",
-    "message": "Cannot access /var/run/docker.sock"
+    "message": "cannot access /var/run/docker.sock"
   }
 }
 ```
 
-## Security
+## UI Requirements
 
-The app is reachable only through the fnOS unified gateway entry. The app should trust fnOS gateway authentication headers for user identity. Admin-only behavior should require the fnOS admin header if available.
+The UI should feel like a compact operations console:
 
-The server must not bind to TCP in production. It must not expose a password page or a separate local port.
+- No landing page.
+- No nested decorative cards.
+- Dense but readable spacing.
+- Clear primary action: run ordered startup.
+- Important state should be visible without scrolling on desktop.
+- Table should remain usable in small fnOS windows with horizontal scrolling.
+- Long names, images, ports, mounts, and logs must truncate or wrap cleanly.
 
-Request handlers must validate user inputs:
+Expected interactions:
 
-- startup order must be integer
-- delay/interval values must be bounded
-- container IDs must refer to discovered containers before actions run
+- Search by name, image, ID, Compose project/service.
+- Filter by all, running, needs attention, stopped, missing, monitored only.
+- Group by Compose project.
+- Edit order, delay, monitor, readiness mode, failure policy.
+- Open a container detail drawer.
+- Export config as JSON.
+- Import config from JSON with validation.
+- Clear logs.
+- Export logs.
 
-## Build Workflow
+## Verification
 
-Windows can be used for editing. Linux/WSL should be used for fnOS runtime preparation, packaging, and verification:
+Before delivery:
 
-```bash
-pnpm install
-pnpm run build:web:fnos
-wsl --cd C:\Users\ymzwh\Code\fnos-docker-manager bash -lc "./scripts/prepare-linux-runtime.sh"
-wsl --cd C:\Users\ymzwh\Code\fnos-docker-manager bash -lc "./packaging/fnos/build-fpk.sh"
-wsl --cd C:\Users\ymzwh\Code\fnos-docker-manager bash -lc "./scripts/verify-fnos-package.sh"
-```
-
-The scripts should keep build output under:
-
-```text
-dist/fnos/
-```
-
-The final artifact should be named:
-
-```text
-dist/fnos/DockerManager-0.1.0-x86_64.fpk
-```
-
-## Verification Requirements
-
-`scripts/verify-fnos-package.sh` must:
-
-- extract the `.fpk`
-- verify required top-level files
-- verify required `app.tgz` files
-- verify icon files exist and are non-empty PNGs
-- verify all `cmd` scripts are executable and have LF endings
-- verify runtime scripts are executable and have LF endings
-- verify JSON files parse and have no UTF-8 BOM
-- verify manifest contains `checkport = false`
-- verify manifest has no `install_type`
-- verify `ui/config` contains the expected app id, gateway socket, and gateway prefix
-- run `cmd/install_init` with a missing `TRIM_APPDEST`
-- run `cmd/main status` against an extracted app and expect exit code `3`
-
-When NAS access is available, final validation should run:
-
-```bash
-sudo appcenter-cli install-fpk <file.fpk>
-```
-
-If install fails, collect:
-
-```bash
-sudo journalctl --since "10 minutes ago" --no-pager -o cat
-```
-
-## Delivery Plan
-
-Even though the selected scope is the full feature set, implementation should be staged with real verification after each stage:
-
-1. Template-perfect installable shell app.
-2. Unix socket server and gateway UI.
-3. Docker discovery and Docker unavailable state.
-4. Config persistence and UI editing.
-5. Ordered startup engine.
-6. Monitoring loop.
-7. Logs and manual actions.
-8. Full package verification and NAS install test.
-
-No stage is considered complete until the verification script passes. The first stage is not allowed to contain Docker logic; it exists to prove the fnOS package structure before adding product complexity.
-
+- Run `npm test`.
+- Run `node --check src/web/app.js`.
+- Run `go test ./...`.
+- Preview UI through `/app/dockermanager`, test main actions and narrow viewport.
+- Build with `npm run build:fpk:official`.
+- Verify with `npm run verify:fpk:native -- <fpk>`.
+- Do not claim installability from build alone; final proof remains NAS App Center or `appcenter-cli` when available.
