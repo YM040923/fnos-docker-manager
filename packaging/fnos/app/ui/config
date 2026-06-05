@@ -2,7 +2,7 @@
   ".url": {
     "dockermanager.Application": {
       "title": "Docker Manager",
-      "desc": "Docker container startup order and monitoring manager",
+      "desc": "Docker 容器启动编排与运行监控工具",
       "icon": "images/icon_{0}.png",
       "type": "iframe",
       "protocol": "",

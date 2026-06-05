@@ -11,7 +11,12 @@
     <div class="app-frame">
       <aside class="sidebar">
         <div class="sidebar-brand">
-          <div class="brand-mark" aria-hidden="true"><span></span><span></span><span></span></div>
+          <div class="brand-mark" aria-hidden="true">
+            <svg viewBox="0 0 64 64">
+              <path class="brand-accent" d="M18 15c-5 6-5 13 0 19" />
+              <path d="M26 15h22v14H35v8h11v9H27V30H16V19h10z" />
+            </svg>
+          </div>
           <strong>Docker Manager</strong>
         </div>
         <nav class="nav" aria-label="主导航">
@@ -37,7 +42,7 @@
           </button>
         </nav>
         <div class="sidebar-footer">
-          <span>v0.3.0</span>
+          <span>v0.3.1</span>
           <button id="refreshBtn" type="button">刷新</button>
         </div>
       </aside>
@@ -121,10 +126,11 @@
             <div class="panel-head">
               <div>
                 <h2>启动编排</h2>
-                <p>数字越小越先启动，前一个未就绪时不会处理后续容器。</p>
+                <p>只显示已纳入编排的容器。拖动左侧手柄调整启动顺序，上面的容器会先启动。</p>
               </div>
               <button id="saveBtn" type="button">保存配置</button>
             </div>
+            <div class="hint">提示：这里不再手填 10、20 这类排序值。需要开机编排的容器先在“容器管理”里打开“纳入编排”，再回到这里拖拽排序。</div>
             <div id="planRows" class="plan-list"></div>
           </section>
         </section>
@@ -134,12 +140,12 @@
             <div class="panel-head">
               <div>
                 <h2>容器管理</h2>
-                <p>按项目分组查看状态、端口并执行安全操作。</p>
+                <p>决定哪些容器参与开机启动编排，以及哪些容器交给后台巡检守护。</p>
               </div>
-              <label class="switch"><input id="groupByProject" type="checkbox" checked />项目分组</label>
+              <button id="saveContainerPolicyBtn" type="button">保存选择</button>
             </div>
             <div class="toolbar">
-              <input id="searchInput" type="search" placeholder="搜索名称、镜像、ID、项目或服务" />
+              <input id="searchInput" type="search" placeholder="搜索名称、镜像、ID 或 Compose 信息" />
               <select id="statusFilter" aria-label="状态筛选">
                 <option value="all">全部状态</option>
                 <option value="running">运行正常</option>
@@ -147,7 +153,7 @@
                 <option value="stopped">已停止</option>
                 <option value="missing">已失联</option>
               </select>
-              <label class="switch"><input id="monitoredOnly" type="checkbox" />只看监控</label>
+              <label class="switch"><input id="monitoredOnly" type="checkbox" />只看已守护</label>
             </div>
             <div id="inventoryRows" class="inventory-list"></div>
             <div id="emptyState" class="empty hidden">没有符合条件的容器。</div>

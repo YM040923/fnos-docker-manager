@@ -136,18 +136,22 @@ h3 {
   flex: 0 0 auto;
   place-items: center;
   border-radius: 6px;
-  background: #111111;
+  background: #eef4ff;
 }
 
-.brand-mark span {
-  display: block;
-  width: 17px;
-  height: 3px;
-  border-radius: 2px;
-  background: #ffffff;
-  box-shadow:
-    0 6px 0 #ffffff,
-    0 12px 0 #ffffff;
+.brand-mark svg {
+  width: 27px;
+  height: 27px;
+  fill: none;
+  stroke: #2f6df6;
+  stroke-linecap: round;
+  stroke-linejoin: round;
+  stroke-width: 5;
+}
+
+.brand-mark .brand-accent {
+  stroke: #60a5fa;
+  stroke-width: 4;
 }
 
 .nav {
@@ -369,6 +373,12 @@ label {
   gap: 10px;
 }
 
+.chain-summary {
+  max-height: 334px;
+  overflow: auto;
+  padding-right: 4px;
+}
+
 .chain-row,
 .problem-row,
 .plan-row,
@@ -422,10 +432,9 @@ label {
 
 .plan-main {
   display: flex;
-  align-items: flex-start;
+  align-items: center;
   gap: 12px;
   min-width: 0;
-  margin-bottom: 14px;
 }
 
 .container-title,
@@ -455,10 +464,43 @@ label {
   white-space: nowrap;
 }
 
-.plan-controls {
-  display: grid;
-  grid-template-columns: 84px 84px 130px 130px auto;
-  gap: 12px;
+.hint {
+  border: 1px solid #e7e9ed;
+  border-radius: 12px;
+  background: #f7f8fa;
+  color: #5b6470;
+  padding: 12px 14px;
+  margin-bottom: 14px;
+  font-size: 13px;
+  line-height: 1.5;
+}
+
+.drag-handle {
+  display: inline-grid;
+  width: 30px;
+  min-height: 30px;
+  flex: 0 0 auto;
+  place-items: center;
+  border-color: transparent;
+  background: transparent;
+  color: #8a94a3;
+  cursor: grab;
+  padding: 0;
+  font-weight: 800;
+  letter-spacing: -3px;
+}
+
+.draggable-row {
+  cursor: grab;
+}
+
+.draggable-row.is-dragging {
+  opacity: 0.55;
+}
+
+.draggable-row:active,
+.drag-handle:active {
+  cursor: grabbing;
 }
 
 .container-group h3 {
@@ -467,7 +509,7 @@ label {
 
 .container-row {
   display: grid;
-  grid-template-columns: minmax(260px, 1.2fr) 112px minmax(190px, 0.9fr) auto;
+  grid-template-columns: minmax(260px, 1.2fr) 112px minmax(190px, 0.9fr) minmax(230px, auto);
   align-items: center;
   gap: 12px;
   padding: 12px;
@@ -481,7 +523,8 @@ label {
 }
 
 .container-state,
-.row-actions {
+.row-actions,
+.policy-actions {
   display: flex;
   align-items: center;
   gap: 8px;
@@ -494,6 +537,11 @@ label {
 
 .row-actions {
   justify-content: flex-end;
+}
+
+.policy-actions {
+  justify-content: flex-end;
+  flex-wrap: wrap;
 }
 
 .row-actions button {
@@ -767,7 +815,6 @@ label {
   .stat-grid,
   .dashboard-grid,
   .toolbar,
-  .plan-controls,
   .settings-form,
   .settings-actions {
     grid-template-columns: 1fr;
@@ -779,6 +826,10 @@ label {
   }
 
   .row-actions {
+    justify-content: flex-start;
+  }
+
+  .policy-actions {
     justify-content: flex-start;
   }
 }

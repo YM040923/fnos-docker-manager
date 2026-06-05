@@ -1,7 +1,7 @@
 const pageMeta = {
   dashboard: ["控制台", "查看 Docker 守护状态、异常容器和最近事件。"],
-  plan: ["启动编排", "编辑容器启动顺序、就绪条件、失败策略和监控开关。"],
-  containers: ["容器管理", "按项目分组查看容器状态，并执行安全操作。"],
+  plan: ["启动编排", "拖拽调整已纳入编排容器的启动顺序。"],
+  containers: ["容器管理", "选择哪些容器参与启动编排和后台守护。"],
   logs: ["事件日志", "筛选、导出或清空巡检和操作记录。"],
   settings: ["系统设置", "调整后台守护、保护策略和配置备份。"],
 };
@@ -19,12 +19,12 @@ const state = {
     query: "",
     status: "all",
     monitoredOnly: false,
-    groupByProject: true,
     logQuery: "",
   },
 };
 
 let pendingConfirm = null;
+let draggedPlanId = "";
 
 const basePath = String(window.DOCKER_MANAGER_BASE || "/app/dockermanager").replace(/\/$/, "");
 const $ = (id) => document.getElementById(id);
@@ -152,16 +152,15 @@ function renderDashboard() {
 function renderChainSummary() {
   const cfg = draftConfig();
   const rows = [...state.containers]
-    .sort((a, b) => (cfg.containers[a.id]?.startupOrder ?? 0) - (cfg.containers[b.id]?.startupOrder ?? 0))
-    .slice(0, 8);
+    .filter((container) => isOrchestrated(container, cfg))
+    .sort((a, b) => orderOf(a, cfg) - orderOf(b, cfg) || a.name.localeCompare(b.name));
   $("chainSummary").innerHTML =
     rows.length === 0
-      ? '<div class="empty compact-empty">没有容器。</div>'
+      ? '<div class="empty compact-empty">还没有容器纳入启动编排。</div>'
       : rows
-          .map((container) => {
-            const item = cfg.containers[container.id] || container.config || {};
+          .map((container, index) => {
             return `<div class="chain-row">
-              <span class="order-dot">${numberValue(item.startupOrder, 0)}</span>
+              <span class="order-dot">${index + 1}</span>
               <strong title="${escapeHtml(container.name)}">${escapeHtml(container.name)}</strong>
               <span class="status ${escapeHtml(statusClass(container))}">${escapeHtml(statusText(container))}</span>
             </div>`;
@@ -197,47 +196,25 @@ function renderSettings() {
 
 function renderPlan() {
   const cfg = draftConfig();
-  const rows = [...state.containers].sort((a, b) => {
-    const left = cfg.containers[a.id]?.startupOrder ?? a.config?.startupOrder ?? 0;
-    const right = cfg.containers[b.id]?.startupOrder ?? b.config?.startupOrder ?? 0;
-    if (left !== right) return left - right;
-    return a.name.localeCompare(b.name);
-  });
+  const rows = [...state.containers]
+    .filter((container) => isOrchestrated(container, cfg))
+    .sort((a, b) => orderOf(a, cfg) - orderOf(b, cfg) || a.name.localeCompare(b.name));
   $("planRows").innerHTML =
     rows.length === 0
-      ? '<div class="empty">没有发现容器。</div>'
-      : rows.map((container) => renderPlanRow(container, cfg)).join("");
+      ? '<div class="empty">还没有容器纳入启动编排。先到“容器管理”打开“纳入编排”。</div>'
+      : rows.map((container, index) => renderPlanRow(container, index)).join("");
 }
 
-function renderPlanRow(container, cfg) {
-  const item = cfg.containers[container.id] || container.config || {};
-  const disabled = container.missing ? "disabled" : "";
-  return `<article class="plan-row ${container.missing ? "is-missing" : ""}" data-id="${escapeHtml(container.id)}">
+function renderPlanRow(container, index) {
+  return `<article class="plan-row draggable-row ${container.missing ? "is-missing" : ""}" data-id="${escapeHtml(container.id)}" draggable="${container.missing ? "false" : "true"}">
     <div class="plan-main">
-      <span class="order-pill">${numberValue(item.startupOrder, 0)}</span>
+      <button class="drag-handle" type="button" draggable="true" aria-label="拖拽排序">⋮⋮</button>
+      <span class="order-pill">${index + 1}</span>
       <div class="container-title">
         <strong title="${escapeHtml(container.name)}">${escapeHtml(container.name)}</strong>
         <span>${escapeHtml(composeLabel(container))}</span>
       </div>
       <span class="status ${escapeHtml(statusClass(container))}">${escapeHtml(statusText(container))}</span>
-    </div>
-    <div class="plan-controls">
-      <label>顺序<input ${disabled} name="startupOrder-${escapeHtml(container.id)}" data-field="startupOrder" type="number" min="0" value="${numberValue(item.startupOrder, 0)}" /></label>
-      <label>延迟<input ${disabled} name="startupDelaySeconds-${escapeHtml(container.id)}" data-field="startupDelaySeconds" type="number" min="0" value="${numberValue(item.startupDelaySeconds, 0)}" /></label>
-      <label>就绪
-        <select ${disabled} name="readinessMode-${escapeHtml(container.id)}" data-field="readinessMode">
-          ${option("auto", "自动", item.readinessMode)}
-          ${option("running", "运行即可", item.readinessMode)}
-          ${option("healthy", "必须健康", item.readinessMode)}
-        </select>
-      </label>
-      <label>失败
-        <select ${disabled} name="failurePolicy-${escapeHtml(container.id)}" data-field="failurePolicy">
-          ${option("retry", "自动重试", item.failurePolicy)}
-          ${option("log", "只记录", item.failurePolicy)}
-        </select>
-      </label>
-      <label class="switch"><input ${disabled} name="monitor-${escapeHtml(container.id)}" data-field="monitor" type="checkbox" ${item.monitor !== false ? "checked" : ""} />监控</label>
     </div>
   </article>`;
 }
@@ -249,18 +226,12 @@ function renderInventory() {
     $("inventoryRows").innerHTML = "";
     return;
   }
-  const groups = groupContainers(visible);
-  $("inventoryRows").innerHTML = groups
-    .map(
-      (group) => `<section class="container-group">
-        ${state.filters.groupByProject ? `<h3>${escapeHtml(group.name)}</h3>` : ""}
-        ${group.items.map(renderInventoryRow).join("")}
-      </section>`,
-    )
-    .join("");
+  $("inventoryRows").innerHTML = visible.map(renderInventoryRow).join("");
 }
 
 function renderInventoryRow(container) {
+  const cfg = draftConfig();
+  const item = cfg.containers[container.id] || container.config || {};
   const portText = formatPorts(container.ports);
   const protectedText = container.protected ? '<span class="tag">保护</span>' : "";
   return `<article class="container-row ${container.missing ? "is-missing" : ""}" data-id="${escapeHtml(container.id)}">
@@ -276,10 +247,9 @@ function renderInventoryRow(container) {
       <span title="${escapeHtml(composeLabel(container))}">${escapeHtml(composeLabel(container))}</span>
       <span title="${escapeHtml(portText)}">${escapeHtml(portText || "无端口")}</span>
     </div>
-    <div class="row-actions">
-      <button data-action="start" type="button" ${container.missing ? "disabled" : ""}>启动</button>
-      <button data-action="restart" type="button" ${container.missing || container.protected ? "disabled" : ""}>重启</button>
-      <button data-action="stop" class="danger" type="button" ${container.missing || container.protected ? "disabled" : ""}>停止</button>
+    <div class="policy-actions">
+      <label class="switch"><input data-policy="enabled" type="checkbox" ${item.enabled !== false ? "checked" : ""} />纳入编排</label>
+      <label class="switch"><input data-policy="monitor" type="checkbox" ${item.monitor !== false ? "checked" : ""} />巡检守护</label>
     </div>
   </article>`;
 }
@@ -350,19 +320,6 @@ function filteredContainers() {
   });
 }
 
-function groupContainers(containers) {
-  if (!state.filters.groupByProject) return [{ name: "", items: containers }];
-  const map = new Map();
-  for (const container of containers) {
-    const key = container.composeProject || "未分组";
-    if (!map.has(key)) map.set(key, []);
-    map.get(key).push(container);
-  }
-  return [...map.entries()]
-    .sort(([a], [b]) => a.localeCompare(b))
-    .map(([name, items]) => ({ name, items }));
-}
-
 function syncSettingsToDraft() {
   const cfg = draftConfig();
   cfg.settings = {
@@ -375,25 +332,36 @@ function syncSettingsToDraft() {
   };
 }
 
-function syncPlanRow(row) {
+function syncPlanOrder() {
+  const cfg = draftConfig();
+  document.querySelectorAll(".plan-row[data-id]").forEach((row, index) => {
+    const id = row.dataset.id;
+    const current = cfg.containers[id] || {};
+    cfg.containers[id] = {
+      ...current,
+      enabled: true,
+      startupOrder: index + 1,
+    };
+  });
+}
+
+function syncInventoryRow(row) {
   if (!row) return;
   const id = row.dataset.id;
   const cfg = draftConfig();
   const current = cfg.containers[id] || {};
   cfg.containers[id] = {
     ...current,
-    enabled: true,
-    startupOrder: Number(row.querySelector('[data-field="startupOrder"]').value),
-    startupDelaySeconds: Number(row.querySelector('[data-field="startupDelaySeconds"]').value),
-    readinessMode: row.querySelector('[data-field="readinessMode"]').value,
-    failurePolicy: row.querySelector('[data-field="failurePolicy"]').value,
-    monitor: row.querySelector('[data-field="monitor"]').checked,
+    name: current.name || state.containers.find((item) => item.id === id)?.name || id,
+    enabled: row.querySelector('[data-policy="enabled"]').checked,
+    monitor: row.querySelector('[data-policy="monitor"]').checked,
   };
 }
 
 function collectConfig() {
   syncSettingsToDraft();
-  document.querySelectorAll(".plan-row[data-id]").forEach(syncPlanRow);
+  document.querySelectorAll(".container-row[data-id]").forEach(syncInventoryRow);
+  syncPlanOrder();
   return draftConfig();
 }
 
@@ -582,6 +550,16 @@ function numberValue(value, fallback) {
   return Number.isFinite(Number(value)) ? Number(value) : fallback;
 }
 
+function isOrchestrated(container, cfg = draftConfig()) {
+  const item = cfg.containers[container.id] || container.config || {};
+  return item.enabled !== false;
+}
+
+function orderOf(container, cfg = draftConfig()) {
+  const item = cfg.containers[container.id] || container.config || {};
+  return numberValue(item.startupOrder, Number.MAX_SAFE_INTEGER);
+}
+
 function formatTime(value) {
   if (!value) return "";
   const date = new Date(value);
@@ -644,6 +622,7 @@ $("refreshBtn").addEventListener("click", refreshAll);
 $("startupBtn").addEventListener("click", runOrderedStartup);
 $("saveBtn").addEventListener("click", saveConfig);
 $("saveSettingsBtn").addEventListener("click", saveConfig);
+$("saveContainerPolicyBtn").addEventListener("click", saveConfig);
 $("searchInput").addEventListener("input", (event) => {
   state.filters.query = event.target.value;
   renderInventory();
@@ -656,19 +635,37 @@ $("monitoredOnly").addEventListener("change", (event) => {
   state.filters.monitoredOnly = event.target.checked;
   renderInventory();
 });
-$("groupByProject").addEventListener("change", (event) => {
-  state.filters.groupByProject = event.target.checked;
-  renderInventory();
-});
 $("logSearchInput").addEventListener("input", (event) => {
   state.filters.logQuery = event.target.value;
   renderLogs();
 });
-$("planRows").addEventListener("input", (event) => {
-  if (event.target.matches("[data-field]")) syncPlanRow(event.target.closest(".plan-row"));
+$("planRows").addEventListener("dragstart", (event) => {
+  const row = event.target.closest(".plan-row[data-id]");
+  if (!row || row.getAttribute("draggable") !== "true") return;
+  draggedPlanId = row.dataset.id;
+  row.classList.add("is-dragging");
+  event.dataTransfer.effectAllowed = "move";
+  event.dataTransfer.setData("text/plain", draggedPlanId);
 });
-$("planRows").addEventListener("change", (event) => {
-  if (event.target.matches("[data-field]")) syncPlanRow(event.target.closest(".plan-row"));
+$("planRows").addEventListener("dragend", (event) => {
+  event.target.closest(".plan-row")?.classList.remove("is-dragging");
+  draggedPlanId = "";
+});
+$("planRows").addEventListener("dragover", (event) => {
+  const over = event.target.closest(".plan-row[data-id]");
+  if (!over || !draggedPlanId || over.dataset.id === draggedPlanId) return;
+  event.preventDefault();
+  const dragging = $(`planRows`).querySelector(`[data-id="${CSS.escape(draggedPlanId)}"]`);
+  if (!dragging) return;
+  const rect = over.getBoundingClientRect();
+  const after = event.clientY > rect.top + rect.height / 2;
+  over.insertAdjacentElement(after ? "afterend" : "beforebegin", dragging);
+});
+$("planRows").addEventListener("drop", (event) => {
+  if (!draggedPlanId) return;
+  event.preventDefault();
+  syncPlanOrder();
+  renderPlan();
 });
 $("inventoryRows").addEventListener("click", (event) => {
   const button = event.target.closest("button[data-action]");
@@ -680,6 +677,12 @@ $("inventoryRows").addEventListener("click", (event) => {
     return;
   }
   runAction(action, row.dataset.id);
+});
+$("inventoryRows").addEventListener("change", (event) => {
+  if (!event.target.matches("[data-policy]")) return;
+  syncInventoryRow(event.target.closest(".container-row"));
+  renderDashboard();
+  renderPlan();
 });
 $("problemList").addEventListener("click", (event) => {
   const row = event.target.closest("[data-id]");
