@@ -1,7 +1,16 @@
 const state = {
   containers: [],
   config: null,
+  monitor: null,
+  logs: [],
+  dockerError: "",
   loading: false,
+  logsCollapsed: false,
+  filters: {
+    query: "",
+    status: "all",
+    monitoredOnly: false,
+  },
 };
 
 const basePath = String(window.DOCKER_MANAGER_BASE || "/app/dockermanager").replace(/\/$/, "");
@@ -42,12 +51,13 @@ async function loadContainers() {
   setLoading(true);
   try {
     const result = await api(route("api/containers"));
-    state.containers = result.containers;
-    state.config = result.config;
+    state.containers = result.containers || [];
+    state.config = result.config || defaultConfig();
+    state.dockerError = "";
     showAlert("");
     render();
   } catch (error) {
-    $("dockerState").textContent = "不可用";
+    state.dockerError = error.message;
     showAlert(error.message);
     render();
   } finally {
@@ -55,38 +65,77 @@ async function loadContainers() {
   }
 }
 
+async function loadMonitor() {
+  try {
+    state.monitor = await api(route("api/monitor"));
+    renderMonitor();
+  } catch (error) {
+    state.monitor = { lastError: error.message };
+    renderMonitor();
+  }
+}
+
 async function loadLogs() {
   try {
-    const logs = await api(route("api/logs"));
-    $("logs").innerHTML =
-      logs.length === 0
-        ? '<div class="empty">暂无日志。</div>'
-        : logs
-            .map(
-              (item) => `<div class="log-item"><time>${escapeHtml(item.time || "")}</time>${escapeHtml(
-                item.message || "",
-              )}</div>`,
-            )
-            .join("");
+    state.logs = await api(route("api/logs"));
   } catch (error) {
-    $("logs").innerHTML = `<div class="empty">${escapeHtml(error.message)}</div>`;
+    state.logs = [{ time: "", message: error.message }];
   }
+  renderLogs();
 }
 
 function render() {
   const rows = $("containerRows");
-  const config = state.config || { settings: {}, containers: {} };
+  const config = normalizedDraftConfig();
+  const visibleContainers = filteredContainers(config);
   const badContainers = state.containers.filter((item) => item.state !== "running" || item.health === "unhealthy");
-  $("dockerState").textContent = state.containers.length > 0 ? "正常" : "未知";
+
+  $("dockerState").textContent = state.dockerError ? "不可用" : "正常";
   $("containerCount").textContent = String(state.containers.length);
   $("badCount").textContent = String(badContainers.length);
   $("lastRefresh").textContent = new Date().toLocaleTimeString();
-  $("emptyState").classList.toggle("hidden", state.containers.length !== 0);
   $("checkInterval").value = config.settings.checkIntervalSeconds || 60;
   $("retryDelay").value = config.settings.startupRetryDelaySeconds || 10;
   $("startupTimeout").value = config.settings.startupTimeoutSeconds || 120;
+  $("emptyState").textContent = state.containers.length === 0 ? "没有发现容器。" : "没有符合条件的容器。";
+  $("emptyState").classList.toggle("hidden", visibleContainers.length !== 0);
 
-  rows.innerHTML = state.containers.map((container) => renderContainerRow(container, config)).join("");
+  rows.innerHTML = visibleContainers.map((container) => renderContainerRow(container, config)).join("");
+  renderMonitor();
+}
+
+function renderMonitor() {
+  const monitor = state.monitor || {};
+  if (!$("monitorState") || !$("nextCheck")) return;
+
+  if (monitor.running) {
+    $("monitorState").textContent = "巡检中";
+  } else if (monitor.lastError) {
+    $("monitorState").textContent = "有异常";
+  } else if (monitor.lastFinishedAt) {
+    $("monitorState").textContent = "正常";
+  } else {
+    $("monitorState").textContent = "等待首次巡检";
+  }
+
+  $("nextCheck").textContent = monitor.nextCheckAt ? formatTime(monitor.nextCheckAt) : "-";
+}
+
+function renderLogs() {
+  const logs = $("logs");
+  const toggle = $("toggleLogsBtn");
+  logs.classList.toggle("collapsed", state.logsCollapsed);
+  if (toggle) toggle.textContent = state.logsCollapsed ? "展开" : "折叠";
+  logs.innerHTML =
+    state.logs.length === 0
+      ? '<div class="empty">暂无日志。</div>'
+      : state.logs
+          .map(
+            (item) => `<div class="log-item"><time>${escapeHtml(formatTime(item.time) || "")}</time>${escapeHtml(
+              item.message || "",
+            )}</div>`,
+          )
+          .join("");
 }
 
 function renderContainerRow(container, config) {
@@ -133,24 +182,72 @@ function statusText(container) {
   return map[normalized] || container.status || container.state || "未知";
 }
 
-function collectConfig() {
-  const config = structuredClone(state.config || { version: 1, settings: {}, containers: {} });
+function filteredContainers(config) {
+  const query = state.filters.query.trim().toLowerCase();
+  return state.containers.filter((container) => {
+    const item = config.containers[container.id] || {};
+    if (state.filters.monitoredOnly && item.monitor === false) return false;
+    if (state.filters.status === "running" && (container.state !== "running" || container.health === "unhealthy")) {
+      return false;
+    }
+    if (state.filters.status === "problem" && container.state === "running" && container.health !== "unhealthy") {
+      return false;
+    }
+    if (state.filters.status === "stopped" && container.state === "running") {
+      return false;
+    }
+    if (!query) return true;
+    return [container.name, container.image, container.id, container.status]
+      .filter(Boolean)
+      .some((value) => String(value).toLowerCase().includes(query));
+  });
+}
+
+function defaultConfig() {
+  return {
+    version: 1,
+    settings: {
+      checkIntervalSeconds: 60,
+      startupRetryDelaySeconds: 10,
+      startupTimeoutSeconds: 120,
+    },
+    containers: {},
+  };
+}
+
+function normalizedDraftConfig() {
+  if (!state.config) state.config = defaultConfig();
+  state.config.settings ||= defaultConfig().settings;
+  state.config.containers ||= {};
+  return state.config;
+}
+
+function syncSettingsToDraft() {
+  const config = normalizedDraftConfig();
   config.settings = {
     checkIntervalSeconds: Number($("checkInterval").value),
     startupRetryDelaySeconds: Number($("retryDelay").value),
     startupTimeoutSeconds: Number($("startupTimeout").value),
   };
-  document.querySelectorAll("tbody tr[data-id]").forEach((row) => {
-    const id = row.dataset.id;
-    config.containers[id] = {
-      ...(config.containers[id] || {}),
-      enabled: true,
-      startupOrder: Number(row.querySelector('[data-field="startupOrder"]').value),
-      startupDelaySeconds: Number(row.querySelector('[data-field="startupDelaySeconds"]').value),
-      monitor: row.querySelector('[data-field="monitor"]').checked,
-    };
-  });
-  return config;
+}
+
+function syncRowToDraft(row) {
+  if (!row) return;
+  const id = row.dataset.id;
+  const config = normalizedDraftConfig();
+  config.containers[id] = {
+    ...(config.containers[id] || {}),
+    enabled: true,
+    startupOrder: Number(row.querySelector('[data-field="startupOrder"]').value),
+    startupDelaySeconds: Number(row.querySelector('[data-field="startupDelaySeconds"]').value),
+    monitor: row.querySelector('[data-field="monitor"]').checked,
+  };
+}
+
+function collectConfig() {
+  syncSettingsToDraft();
+  document.querySelectorAll("tbody tr[data-id]").forEach(syncRowToDraft);
+  return normalizedDraftConfig();
 }
 
 async function saveConfig() {
@@ -171,6 +268,7 @@ async function runAction(path) {
   try {
     await api(path, { method: "POST" });
     await loadContainers();
+    await loadMonitor();
     await loadLogs();
   } catch (error) {
     showAlert(error.message);
@@ -190,6 +288,13 @@ function numberValue(value, fallback) {
   return Number.isFinite(Number(value)) ? Number(value) : fallback;
 }
 
+function formatTime(value) {
+  if (!value) return "";
+  const date = new Date(value);
+  if (Number.isNaN(date.getTime())) return String(value);
+  return date.toLocaleTimeString();
+}
+
 function escapeHtml(value) {
   return String(value)
     .replaceAll("&", "&amp;")
@@ -202,6 +307,28 @@ $("refreshBtn").addEventListener("click", loadContainers);
 $("saveBtn").addEventListener("click", saveConfig);
 $("startupBtn").addEventListener("click", () => runAction(route("api/actions/startup-run")));
 $("reloadLogsBtn").addEventListener("click", loadLogs);
+$("toggleLogsBtn").addEventListener("click", () => {
+  state.logsCollapsed = !state.logsCollapsed;
+  renderLogs();
+});
+$("searchInput").addEventListener("input", (event) => {
+  state.filters.query = event.target.value;
+  render();
+});
+$("statusFilter").addEventListener("change", (event) => {
+  state.filters.status = event.target.value;
+  render();
+});
+$("monitoredOnly").addEventListener("change", (event) => {
+  state.filters.monitoredOnly = event.target.checked;
+  render();
+});
+$("containerRows").addEventListener("input", (event) => {
+  if (event.target.matches("[data-field]")) syncRowToDraft(event.target.closest("tr[data-id]"));
+});
+$("containerRows").addEventListener("change", (event) => {
+  if (event.target.matches("[data-field]")) syncRowToDraft(event.target.closest("tr[data-id]"));
+});
 $("containerRows").addEventListener("click", (event) => {
   const button = event.target.closest("button[data-action]");
   if (!button) return;
@@ -210,4 +337,6 @@ $("containerRows").addEventListener("click", (event) => {
 });
 
 await loadContainers();
+await loadMonitor();
 await loadLogs();
+setInterval(loadMonitor, 15000);

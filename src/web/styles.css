@@ -15,7 +15,8 @@ body {
 }
 
 button,
-input {
+input,
+select {
   font: inherit;
 }
 
@@ -27,6 +28,7 @@ button {
   border-radius: 6px;
   padding: 7px 12px;
   cursor: pointer;
+  white-space: nowrap;
   transition:
     background 0.16s ease,
     border-color 0.16s ease,
@@ -60,7 +62,8 @@ button:disabled {
   opacity: 0.55;
 }
 
-input {
+input,
+select {
   width: 100%;
   min-height: 36px;
   border: 1px solid #cfd8e3;
@@ -70,7 +73,8 @@ input {
   padding: 7px 9px;
 }
 
-input:focus {
+input:focus,
+select:focus {
   border-color: #0f766e;
   outline: 2px solid rgba(15, 118, 110, 0.14);
   outline-offset: 0;
@@ -171,7 +175,7 @@ h2 {
 
 .metrics {
   display: grid;
-  grid-template-columns: repeat(4, minmax(0, 1fr));
+  grid-template-columns: repeat(6, minmax(0, 1fr));
   gap: 12px;
   margin-bottom: 16px;
 }
@@ -230,6 +234,34 @@ h2 {
 
 .panel-head.compact {
   margin-bottom: 2px;
+}
+
+.toolbar {
+  display: grid;
+  grid-template-columns: minmax(220px, 1fr) 150px auto;
+  align-items: center;
+  gap: 10px;
+  margin-bottom: 12px;
+}
+
+.toolbar input[type="search"] {
+  padding-left: 12px;
+}
+
+.inline-check {
+  display: inline-flex;
+  align-items: center;
+  justify-content: flex-end;
+  gap: 7px;
+  margin: 0;
+  color: #334155;
+  white-space: nowrap;
+}
+
+.inline-check input {
+  width: 18px;
+  min-height: 18px;
+  margin: 0;
 }
 
 .table-wrap {
@@ -391,6 +423,15 @@ label {
   font-size: 13px;
 }
 
+.logs.collapsed {
+  max-height: 128px;
+}
+
+.log-actions {
+  display: inline-flex;
+  gap: 8px;
+}
+
 .log-item {
   border-left: 3px solid #94a3b8;
   padding: 7px 0 7px 10px;
@@ -413,6 +454,10 @@ label {
     grid-template-columns: 1fr;
   }
 
+  .metrics {
+    grid-template-columns: repeat(3, minmax(0, 1fr));
+  }
+
   .side {
     grid-template-columns: repeat(2, minmax(0, 1fr));
   }
@@ -433,6 +478,14 @@ label {
 
   .metrics {
     grid-template-columns: repeat(2, minmax(0, 1fr));
+  }
+
+  .toolbar {
+    grid-template-columns: 1fr;
+  }
+
+  .inline-check {
+    justify-content: flex-start;
   }
 }
 

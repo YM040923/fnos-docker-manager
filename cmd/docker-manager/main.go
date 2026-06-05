@@ -22,9 +22,9 @@ import (
 const gatewayPrefix = "/app/dockermanager"
 
 type Settings struct {
-	CheckIntervalSeconds       int `json:"checkIntervalSeconds"`
-	StartupRetryDelaySeconds  int `json:"startupRetryDelaySeconds"`
-	StartupTimeoutSeconds     int `json:"startupTimeoutSeconds"`
+	CheckIntervalSeconds     int `json:"checkIntervalSeconds"`
+	StartupRetryDelaySeconds int `json:"startupRetryDelaySeconds"`
+	StartupTimeoutSeconds    int `json:"startupTimeoutSeconds"`
 }
 
 type ContainerConfig struct {
@@ -49,14 +49,26 @@ type Container struct {
 	Health string `json:"health"`
 }
 
+type MonitorStatus struct {
+	Running        bool           `json:"running"`
+	LastStartedAt  string         `json:"lastStartedAt"`
+	LastFinishedAt string         `json:"lastFinishedAt"`
+	NextCheckAt    string         `json:"nextCheckAt"`
+	LastError      string         `json:"lastError"`
+	LastResult     map[string]any `json:"lastResult,omitempty"`
+}
+
 type App struct {
-	dataDir    string
-	webDir     string
-	dockerSock string
-	configPath string
-	logPath    string
-	client     *http.Client
-	mu         sync.Mutex
+	dataDir       string
+	webDir        string
+	dockerSock    string
+	configPath    string
+	logPath       string
+	client        *http.Client
+	mu            sync.Mutex
+	runMu         sync.Mutex
+	monitorMu     sync.Mutex
+	monitorStatus MonitorStatus
 }
 
 func main() {
@@ -66,6 +78,7 @@ func main() {
 	webDir := getenv("FNOS_WEB_DIR", filepath.Join(appDest, "web"))
 
 	app := NewApp(dataDir, webDir, getenv("DOCKER_SOCKET", "/var/run/docker.sock"))
+	app.startMonitorLoop()
 	_ = os.Remove(socketPath)
 	if err := os.MkdirAll(filepath.Dir(socketPath), 0755); err != nil {
 		log.Fatal(err)
@@ -144,7 +157,9 @@ func (a *App) handleAPI(w http.ResponseWriter, r *http.Request, pathName string)
 			writeResult(w, nil, err)
 			return
 		}
-		writeResult(w, a.runOrderedStartup(cfg), nil)
+		writeResult(w, a.runOrderedStartup(cfg, false, "manual"), nil)
+	case r.Method == http.MethodGet && pathName == "/api/monitor":
+		writeResult(w, a.currentMonitorStatus(), nil)
 	case r.Method == http.MethodGet && pathName == "/api/logs":
 		writeResult(w, a.readLogs(), nil)
 	default:
@@ -219,7 +234,7 @@ func (a *App) listContainers() ([]Container, error) {
 		if len(row.Names) > 0 {
 			name = strings.TrimPrefix(row.Names[0], "/")
 		}
-		out = append(out, Container{ID: row.ID, Name: name, Image: row.Image, State: row.State, Status: row.Status, Health: "none"})
+		out = append(out, Container{ID: row.ID, Name: name, Image: row.Image, State: row.State, Status: row.Status, Health: healthFromStatus(row.Status)})
 	}
 	return out, nil
 }
@@ -277,9 +292,63 @@ func (a *App) docker(method, pathName string, body any, target any) error {
 	return nil
 }
 
-func (a *App) runOrderedStartup(cfg Config) map[string]any {
-	items := ordered(cfg, false)
+func (a *App) startMonitorLoop() {
+	go func() {
+		for {
+			cfg, err := a.readConfig()
+			if err != nil {
+				next := time.Now().Add(time.Minute)
+				a.setMonitorStatus(func(status *MonitorStatus) {
+					status.Running = false
+					status.LastError = err.Error()
+					status.NextCheckAt = next.Format(time.RFC3339)
+				})
+				_ = a.appendLog("error", "Monitor config read failed", map[string]string{"error": err.Error()})
+				time.Sleep(time.Until(next))
+				continue
+			}
+
+			started := time.Now()
+			a.setMonitorStatus(func(status *MonitorStatus) {
+				status.Running = true
+				status.LastStartedAt = started.Format(time.RFC3339)
+				status.LastError = ""
+				status.NextCheckAt = ""
+			})
+			result := a.runOrderedStartup(cfg, true, "monitor")
+			finished := time.Now()
+			next := finished.Add(time.Duration(cfg.Settings.CheckIntervalSeconds) * time.Second)
+			a.setMonitorStatus(func(status *MonitorStatus) {
+				status.Running = false
+				status.LastFinishedAt = finished.Format(time.RFC3339)
+				status.NextCheckAt = next.Format(time.RFC3339)
+				status.LastResult = result
+				status.LastError = resultError(result)
+			})
+			time.Sleep(time.Until(next))
+		}
+	}()
+}
+
+func (a *App) currentMonitorStatus() MonitorStatus {
+	a.monitorMu.Lock()
+	defer a.monitorMu.Unlock()
+	return a.monitorStatus
+}
+
+func (a *App) setMonitorStatus(update func(*MonitorStatus)) {
+	a.monitorMu.Lock()
+	defer a.monitorMu.Unlock()
+	update(&a.monitorStatus)
+}
+
+func (a *App) runOrderedStartup(cfg Config, monitorOnly bool, source string) map[string]any {
+	a.runMu.Lock()
+	defer a.runMu.Unlock()
+	started := time.Now()
+	items := ordered(cfg, monitorOnly)
 	results := []map[string]any{}
+	_ = a.appendLog("startup", "Ordered check started", map[string]string{"source": source, "count": strconv.Itoa(len(items))})
 	for _, item := range items {
 		result := a.ensureReady(item.ID, item.Config, cfg.Settings)
 		results = append(results, result)
@@ -290,7 +359,15 @@ func (a *App) runOrderedStartup(cfg Config) map[string]any {
 			time.Sleep(time.Duration(item.Config.StartupDelaySeconds) * time.Second)
 		}
 	}
-	return map[string]any{"status": "ok", "results": results}
+	finished := time.Now()
+	_ = a.appendLog("startup", "Ordered check finished", map[string]string{"source": source, "count": strconv.Itoa(len(results))})
+	return map[string]any{
+		"status":     "ok",
+		"source":     source,
+		"startedAt":  started.Format(time.RFC3339),
+		"finishedAt": finished.Format(time.RFC3339),
+		"results":    results,
+	}
 }
 
 func (a *App) ensureReady(id string, cfg ContainerConfig, settings Settings) map[string]any {
@@ -309,11 +386,47 @@ func (a *App) ensureReady(id string, cfg ContainerConfig, settings Settings) map
 		}
 		if !running {
 			_ = a.appendLog("startup", "Starting "+container.Name, nil)
-			_ = a.docker("POST", "/containers/"+id+"/start", nil, nil)
+			if err := a.docker("POST", "/containers/"+id+"/start", nil, nil); err != nil {
+				_ = a.appendLog("error", "Start failed", map[string]string{"id": id, "error": err.Error()})
+				return map[string]any{"id": id, "name": container.Name, "status": "error", "attempts": attempts, "error": err.Error()}
+			}
+		} else if container.Health != "" && container.Health != "none" && container.Health != "healthy" {
+			_ = a.appendLog("restart", "Restarting unhealthy "+container.Name, nil)
+			if err := a.docker("POST", "/containers/"+id+"/restart", nil, nil); err != nil {
+				_ = a.appendLog("error", "Restart failed", map[string]string{"id": id, "error": err.Error()})
+				return map[string]any{"id": id, "name": container.Name, "status": "error", "attempts": attempts, "error": err.Error()}
+			}
 		}
 		time.Sleep(time.Duration(settings.StartupRetryDelaySeconds) * time.Second)
 	}
 	return map[string]any{"id": id, "status": "timeout", "attempts": attempts}
+}
+
+func healthFromStatus(status string) string {
+	switch {
+	case strings.Contains(status, "(healthy)"):
+		return "healthy"
+	case strings.Contains(status, "(unhealthy)"):
+		return "unhealthy"
+	default:
+		return "none"
+	}
+}
+
+func resultError(result map[string]any) string {
+	rows, ok := result["results"].([]map[string]any)
+	if !ok {
+		return ""
+	}
+	for _, row := range rows {
+		if fmt.Sprint(row["status"]) != "ready" {
+			if errText := fmt.Sprint(row["error"]); errText != "" && errText != "<nil>" {
+				return errText
+			}
+			return fmt.Sprintf("%s: %s", row["id"], row["status"])
+		}
+	}
+	return ""
 }
 
 func ready(container Container, running bool) bool {
@@ -386,7 +499,7 @@ func normalizeConfig(cfg Config) Config {
 	out := Config{
 		Version: 1,
 		Settings: Settings{
-			CheckIntervalSeconds:      clamp(cfg.Settings.CheckIntervalSeconds, 60, 10, 3600),
+			CheckIntervalSeconds:     clamp(cfg.Settings.CheckIntervalSeconds, 60, 10, 3600),
 			StartupRetryDelaySeconds: clamp(cfg.Settings.StartupRetryDelaySeconds, 10, 3, 600),
 			StartupTimeoutSeconds:    clamp(cfg.Settings.StartupTimeoutSeconds, 120, 15, 3600),
 		},
