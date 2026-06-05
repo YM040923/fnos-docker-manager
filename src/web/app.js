@@ -71,37 +71,61 @@ async function loadLogs() {
 function render() {
   const rows = $("containerRows");
   const config = state.config || { settings: {}, containers: {} };
+  const badContainers = state.containers.filter((item) => item.state !== "running" || item.health === "unhealthy");
   $("dockerState").textContent = state.containers.length > 0 ? "正常" : "未知";
   $("containerCount").textContent = String(state.containers.length);
-  $("badCount").textContent = String(state.containers.filter((item) => item.state !== "running").length);
+  $("badCount").textContent = String(badContainers.length);
   $("lastRefresh").textContent = new Date().toLocaleTimeString();
   $("emptyState").classList.toggle("hidden", state.containers.length !== 0);
   $("checkInterval").value = config.settings.checkIntervalSeconds || 60;
   $("retryDelay").value = config.settings.startupRetryDelaySeconds || 10;
   $("startupTimeout").value = config.settings.startupTimeoutSeconds || 120;
 
-  rows.innerHTML = state.containers
-    .map((container) => {
-      const item = config.containers[container.id] || {};
-      const statusClass = container.health === "unhealthy" ? "unhealthy" : container.state;
-      return `<tr data-id="${escapeHtml(container.id)}">
-        <td><input data-field="startupOrder" type="number" min="0" value="${numberValue(item.startupOrder, 0)}" /></td>
-        <td><strong>${escapeHtml(container.name)}</strong><br /><small>${escapeHtml(container.id.slice(0, 12))}</small></td>
-        <td>${escapeHtml(container.image)}</td>
-        <td><span class="status ${escapeHtml(statusClass)}">${escapeHtml(container.status || container.state)}</span></td>
-        <td><input data-field="startupDelaySeconds" type="number" min="0" value="${numberValue(
-          item.startupDelaySeconds,
-          0,
-        )}" /></td>
-        <td><input data-field="monitor" type="checkbox" ${item.monitor !== false ? "checked" : ""} /></td>
-        <td><div class="row-actions">
-          <button data-action="start">启动</button>
-          <button data-action="stop">停止</button>
-          <button data-action="restart">重启</button>
-        </div></td>
-      </tr>`;
-    })
-    .join("");
+  rows.innerHTML = state.containers.map((container) => renderContainerRow(container, config)).join("");
+}
+
+function renderContainerRow(container, config) {
+  const item = config.containers[container.id] || {};
+  const statusClass = container.health === "unhealthy" ? "unhealthy" : container.state;
+  return `<tr data-id="${escapeHtml(container.id)}">
+    <td><input aria-label="${escapeHtml(container.name)} 的启动顺序" name="startupOrder" data-field="startupOrder" type="number" min="0" value="${numberValue(
+      item.startupOrder,
+      0,
+    )}" /></td>
+    <td>
+      <span class="container-name" title="${escapeHtml(container.name)}">${escapeHtml(container.name)}</span>
+      <span class="container-id">${escapeHtml(container.id.slice(0, 12))}</span>
+    </td>
+    <td><span class="image-name" title="${escapeHtml(container.image)}">${escapeHtml(container.image)}</span></td>
+    <td><span class="status ${escapeHtml(statusClass)}">${escapeHtml(statusText(container))}</span></td>
+    <td><input aria-label="${escapeHtml(container.name)} 的启动延迟" name="startupDelaySeconds" data-field="startupDelaySeconds" type="number" min="0" value="${numberValue(
+      item.startupDelaySeconds,
+      0,
+    )}" /></td>
+    <td><input aria-label="监控 ${escapeHtml(container.name)}" name="monitor" data-field="monitor" type="checkbox" ${
+      item.monitor !== false ? "checked" : ""
+    } /></td>
+    <td><div class="row-actions">
+      <button type="button" class="icon-button" title="启动" aria-label="启动 ${escapeHtml(container.name)}" data-action="start">启</button>
+      <button type="button" class="icon-button" title="重启" aria-label="重启 ${escapeHtml(container.name)}" data-action="restart">重</button>
+      <button type="button" class="icon-button danger" title="停止" aria-label="停止 ${escapeHtml(container.name)}" data-action="stop">停</button>
+    </div></td>
+  </tr>`;
+}
+
+function statusText(container) {
+  if (container.health === "unhealthy") return "异常";
+  if (container.health === "healthy") return "健康";
+  const normalized = String(container.state || "").toLowerCase();
+  const map = {
+    created: "已创建",
+    dead: "失效",
+    exited: "已停止",
+    paused: "已暂停",
+    restarting: "重启中",
+    running: "运行中",
+  };
+  return map[normalized] || container.status || container.state || "未知";
 }
 
 function collectConfig() {
