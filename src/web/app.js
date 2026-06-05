@@ -4,7 +4,12 @@ const state = {
   loading: false,
 };
 
+const basePath = String(window.DOCKER_MANAGER_BASE || "/app/dockermanager").replace(/\/$/, "");
 const $ = (id) => document.getElementById(id);
+
+function route(path) {
+  return `${basePath}/${String(path).replace(/^\.\//, "").replace(/^\//, "")}`;
+}
 
 function showAlert(message) {
   const el = $("alert");
@@ -36,7 +41,7 @@ async function api(path, options = {}) {
 async function loadContainers() {
   setLoading(true);
   try {
-    const result = await api("./api/containers");
+    const result = await api(route("api/containers"));
     state.containers = result.containers;
     state.config = result.config;
     showAlert("");
@@ -52,7 +57,7 @@ async function loadContainers() {
 
 async function loadLogs() {
   try {
-    const logs = await api("./api/logs");
+    const logs = await api(route("api/logs"));
     $("logs").innerHTML =
       logs.length === 0
         ? '<div class="empty">暂无日志。</div>'
@@ -150,7 +155,7 @@ function collectConfig() {
 
 async function saveConfig() {
   try {
-    state.config = await api("./api/config", {
+    state.config = await api(route("api/config"), {
       method: "PUT",
       body: JSON.stringify(collectConfig()),
     });
@@ -195,13 +200,13 @@ function escapeHtml(value) {
 
 $("refreshBtn").addEventListener("click", loadContainers);
 $("saveBtn").addEventListener("click", saveConfig);
-$("startupBtn").addEventListener("click", () => runAction("./api/actions/startup-run"));
+$("startupBtn").addEventListener("click", () => runAction(route("api/actions/startup-run")));
 $("reloadLogsBtn").addEventListener("click", loadLogs);
 $("containerRows").addEventListener("click", (event) => {
   const button = event.target.closest("button[data-action]");
   if (!button) return;
   const row = button.closest("tr[data-id]");
-  runAction(`./api/containers/${encodeURIComponent(row.dataset.id)}/${button.dataset.action}`);
+  runAction(route(`api/containers/${encodeURIComponent(row.dataset.id)}/${button.dataset.action}`));
 });
 
 await loadContainers();

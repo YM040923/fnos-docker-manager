@@ -5,7 +5,7 @@
     <meta name="viewport" content="width=device-width, initial-scale=1" />
     <title>Docker Manager</title>
     <link rel="icon" href="data:," />
-    <link rel="stylesheet" href="./styles.css" />
+    <link rel="stylesheet" href="/app/dockermanager/styles.css" />
   </head>
   <body>
     <div class="shell">
@@ -111,6 +111,9 @@
         </aside>
       </main>
     </div>
-    <script type="module" src="./app.js"></script>
+    <script>
+      window.DOCKER_MANAGER_BASE = "/app/dockermanager";
+    </script>
+    <script type="module" src="/app/dockermanager/app.js"></script>
   </body>
 </html>
