@@ -20,18 +20,34 @@ import (
 )
 
 const gatewayPrefix = "/app/dockermanager"
+const currentConfigVersion = 2
+
+const (
+	readinessAuto    = "auto"
+	readinessRunning = "running"
+	readinessHealthy = "healthy"
+	policyRetry      = "retry"
+	policyLog        = "log"
+)
 
 type Settings struct {
-	CheckIntervalSeconds     int `json:"checkIntervalSeconds"`
-	StartupRetryDelaySeconds int `json:"startupRetryDelaySeconds"`
-	StartupTimeoutSeconds    int `json:"startupTimeoutSeconds"`
+	CheckIntervalSeconds     int  `json:"checkIntervalSeconds"`
+	StartupRetryDelaySeconds int  `json:"startupRetryDelaySeconds"`
+	StartupTimeoutSeconds    int  `json:"startupTimeoutSeconds"`
+	AutoRunOnStart           bool `json:"autoRunOnStart"`
+	ProtectManagerContainers bool `json:"protectManagerContainers"`
+	LogRetentionLines        int  `json:"logRetentionLines"`
 }
 
 type ContainerConfig struct {
-	Enabled             bool `json:"enabled"`
-	StartupOrder        int  `json:"startupOrder"`
-	StartupDelaySeconds int  `json:"startupDelaySeconds"`
-	Monitor             bool `json:"monitor"`
+	Enabled             bool   `json:"enabled"`
+	Name                string `json:"name,omitempty"`
+	Image               string `json:"image,omitempty"`
+	StartupOrder        int    `json:"startupOrder"`
+	StartupDelaySeconds int    `json:"startupDelaySeconds"`
+	Monitor             bool   `json:"monitor"`
+	ReadinessMode       string `json:"readinessMode"`
+	FailurePolicy       string `json:"failurePolicy"`
 }
 
 type Config struct {
@@ -41,12 +57,42 @@ type Config struct {
 }
 
 type Container struct {
-	ID     string `json:"id"`
-	Name   string `json:"name"`
-	Image  string `json:"image"`
-	State  string `json:"state"`
-	Status string `json:"status"`
-	Health string `json:"health"`
+	ID             string          `json:"id"`
+	Name           string          `json:"name"`
+	Image          string          `json:"image"`
+	State          string          `json:"state"`
+	Status         string          `json:"status"`
+	Health         string          `json:"health"`
+	Running        bool            `json:"running"`
+	Missing        bool            `json:"missing"`
+	Protected      bool            `json:"protected"`
+	Created        int64           `json:"created,omitempty"`
+	Ports          []PortSummary   `json:"ports,omitempty"`
+	Mounts         []MountSummary  `json:"mounts,omitempty"`
+	Networks       []NetworkInfo   `json:"networks,omitempty"`
+	ComposeProject string          `json:"composeProject,omitempty"`
+	ComposeService string          `json:"composeService,omitempty"`
+	Config         ContainerConfig `json:"config"`
+}
+
+type PortSummary struct {
+	IP          string `json:"ip,omitempty"`
+	PrivatePort int    `json:"privatePort"`
+	PublicPort  int    `json:"publicPort,omitempty"`
+	Type        string `json:"type"`
+}
+
+type MountSummary struct {
+	Type        string `json:"type"`
+	Source      string `json:"source,omitempty"`
+	Destination string `json:"destination"`
+	Mode        string `json:"mode,omitempty"`
+	RW          bool   `json:"rw"`
+}
+
+type NetworkInfo struct {
+	Name      string `json:"name"`
+	IPAddress string `json:"ipAddress,omitempty"`
 }
 
 type MonitorStatus struct {
@@ -162,7 +208,13 @@ func (a *App) handleAPI(w http.ResponseWriter, r *http.Request, pathName string)
 		writeResult(w, a.currentMonitorStatus(), nil)
 	case r.Method == http.MethodGet && pathName == "/api/logs":
 		writeResult(w, a.readLogs(), nil)
+	case r.Method == http.MethodPost && pathName == "/api/logs/clear":
+		writeResult(w, map[string]bool{"ok": true}, a.clearLogs())
 	default:
+		if strings.HasPrefix(pathName, "/api/containers/") && r.Method == http.MethodGet {
+			a.handleContainerDetails(w, pathName)
+			return
+		}
 		if strings.HasPrefix(pathName, "/api/containers/") && r.Method == http.MethodPost {
 			a.handleContainerAction(w, pathName)
 			return
@@ -184,6 +236,7 @@ func (a *App) handleContainers(w http.ResponseWriter) {
 	}
 	cfg = mergeDiscovered(cfg, containers)
 	_, _ = a.writeConfig(cfg)
+	containers = withConfiguredEntries(cfg, containers)
 	writeJSON(w, http.StatusOK, map[string]any{"containers": containers, "config": cfg})
 }
 
@@ -211,19 +264,66 @@ func (a *App) handleContainerAction(w http.ResponseWriter, pathName string) {
 		writeError(w, http.StatusNotFound, "NOT_FOUND", "Unknown action")
 		return
 	}
+	if action == "stop" || action == "restart" {
+		cfg, _ := a.readConfig()
+		container, _, inspectErr := a.inspect(id)
+		if inspectErr == nil && cfg.Settings.ProtectManagerContainers && isManagerContainer(container.Name, container.Image) {
+			writeError(w, http.StatusForbidden, "PROTECTED_CONTAINER", "This container is protected by Docker Manager")
+			return
+		}
+	}
 	if err == nil {
 		_ = a.appendLog(action, action+" requested", map[string]string{"id": id})
 	}
 	writeResult(w, map[string]bool{"ok": true}, err)
 }
 
+func (a *App) handleContainerDetails(w http.ResponseWriter, pathName string) {
+	parts := strings.Split(strings.TrimPrefix(pathName, "/api/containers/"), "/")
+	if len(parts) != 2 || parts[1] != "details" {
+		writeError(w, http.StatusNotFound, "NOT_FOUND", "Container detail route not found")
+		return
+	}
+	container, _, err := a.inspect(parts[0])
+	if err != nil {
+		writeResult(w, nil, err)
+		return
+	}
+	cfg, _ := a.readConfig()
+	if item, ok := cfg.Containers[container.ID]; ok {
+		container.Config = item
+	}
+	container.Protected = cfg.Settings.ProtectManagerContainers && isManagerContainer(container.Name, container.Image)
+	writeJSON(w, http.StatusOK, container)
+}
+
 func (a *App) listContainers() ([]Container, error) {
 	var raw []struct {
-		ID     string   `json:"Id"`
-		Names  []string `json:"Names"`
-		Image  string   `json:"Image"`
-		State  string   `json:"State"`
-		Status string   `json:"Status"`
+		ID      string            `json:"Id"`
+		Names   []string          `json:"Names"`
+		Image   string            `json:"Image"`
+		State   string            `json:"State"`
+		Status  string            `json:"Status"`
+		Created int64             `json:"Created"`
+		Labels  map[string]string `json:"Labels"`
+		Ports   []struct {
+			IP          string `json:"IP"`
+			PrivatePort int    `json:"PrivatePort"`
+			PublicPort  int    `json:"PublicPort"`
+			Type        string `json:"Type"`
+		} `json:"Ports"`
+		Mounts []struct {
+			Type        string `json:"Type"`
+			Source      string `json:"Source"`
+			Destination string `json:"Destination"`
+			Mode        string `json:"Mode"`
+			RW          bool   `json:"RW"`
+		} `json:"Mounts"`
+		NetworkSettings struct {
+			Networks map[string]struct {
+				IPAddress string `json:"IPAddress"`
+			} `json:"Networks"`
+		} `json:"NetworkSettings"`
 	}
 	if err := a.docker("GET", "/containers/json?all=1", nil, &raw); err != nil {
 		return nil, err
@@ -234,18 +334,55 @@ func (a *App) listContainers() ([]Container, error) {
 		if len(row.Names) > 0 {
 			name = strings.TrimPrefix(row.Names[0], "/")
 		}
-		out = append(out, Container{ID: row.ID, Name: name, Image: row.Image, State: row.State, Status: row.Status, Health: healthFromStatus(row.Status)})
+		ports := []PortSummary{}
+		for _, port := range row.Ports {
+			ports = append(ports, PortSummary{IP: port.IP, PrivatePort: port.PrivatePort, PublicPort: port.PublicPort, Type: port.Type})
+		}
+		mounts := []MountSummary{}
+		for _, mount := range row.Mounts {
+			mounts = append(mounts, MountSummary{Type: mount.Type, Source: mount.Source, Destination: mount.Destination, Mode: mount.Mode, RW: mount.RW})
+		}
+		networks := []NetworkInfo{}
+		for network, info := range row.NetworkSettings.Networks {
+			networks = append(networks, NetworkInfo{Name: network, IPAddress: info.IPAddress})
+		}
+		sort.Slice(networks, func(i, j int) bool { return networks[i].Name < networks[j].Name })
+		health := healthFromStatus(row.Status)
+		out = append(out, Container{
+			ID:             row.ID,
+			Name:           name,
+			Image:          row.Image,
+			State:          row.State,
+			Status:         row.Status,
+			Health:         health,
+			Running:        row.State == "running",
+			Protected:      isManagerContainer(name, row.Image),
+			Created:        row.Created,
+			Ports:          ports,
+			Mounts:         mounts,
+			Networks:       networks,
+			ComposeProject: row.Labels["com.docker.compose.project"],
+			ComposeService: row.Labels["com.docker.compose.service"],
+		})
 	}
 	return out, nil
 }
 
 func (a *App) inspect(id string) (Container, bool, error) {
 	var raw struct {
-		ID     string `json:"Id"`
-		Name   string `json:"Name"`
-		Config struct {
-			Image string `json:"Image"`
+		ID      string         `json:"Id"`
+		Name    string         `json:"Name"`
+		Created string         `json:"Created"`
+		Mounts  []MountSummary `json:"Mounts"`
+		Config  struct {
+			Image  string            `json:"Image"`
+			Labels map[string]string `json:"Labels"`
 		} `json:"Config"`
+		NetworkSettings struct {
+			Networks map[string]struct {
+				IPAddress string `json:"IPAddress"`
+			} `json:"Networks"`
+		} `json:"NetworkSettings"`
 		State struct {
 			Status  string `json:"Status"`
 			Running bool   `json:"Running"`
@@ -261,7 +398,33 @@ func (a *App) inspect(id string) (Container, bool, error) {
 	if raw.State.Health != nil {
 		health = raw.State.Health.Status
 	}
-	return Container{ID: raw.ID, Name: strings.TrimPrefix(raw.Name, "/"), Image: raw.Config.Image, State: raw.State.Status, Status: raw.State.Status, Health: health}, raw.State.Running, nil
+	created := int64(0)
+	if raw.Created != "" {
+		if parsed, err := time.Parse(time.RFC3339Nano, raw.Created); err == nil {
+			created = parsed.Unix()
+		}
+	}
+	networks := []NetworkInfo{}
+	for network, info := range raw.NetworkSettings.Networks {
+		networks = append(networks, NetworkInfo{Name: network, IPAddress: info.IPAddress})
+	}
+	sort.Slice(networks, func(i, j int) bool { return networks[i].Name < networks[j].Name })
+	name := strings.TrimPrefix(raw.Name, "/")
+	return Container{
+		ID:             raw.ID,
+		Name:           name,
+		Image:          raw.Config.Image,
+		State:          raw.State.Status,
+		Status:         raw.State.Status,
+		Health:         health,
+		Running:        raw.State.Running,
+		Protected:      isManagerContainer(name, raw.Config.Image),
+		Created:        created,
+		Mounts:         raw.Mounts,
+		Networks:       networks,
+		ComposeProject: raw.Config.Labels["com.docker.compose.project"],
+		ComposeService: raw.Config.Labels["com.docker.compose.service"],
+	}, raw.State.Running, nil
 }
 
 func (a *App) docker(method, pathName string, body any, target any) error {
@@ -294,6 +457,7 @@ func (a *App) docker(method, pathName string, body any, target any) error {
 
 func (a *App) startMonitorLoop() {
 	go func() {
+		firstRun := true
 		for {
 			cfg, err := a.readConfig()
 			if err != nil {
@@ -307,6 +471,17 @@ func (a *App) startMonitorLoop() {
 				time.Sleep(time.Until(next))
 				continue
 			}
+			if firstRun && !cfg.Settings.AutoRunOnStart {
+				firstRun = false
+				next := time.Now().Add(time.Duration(cfg.Settings.CheckIntervalSeconds) * time.Second)
+				a.setMonitorStatus(func(status *MonitorStatus) {
+					status.Running = false
+					status.NextCheckAt = next.Format(time.RFC3339)
+				})
+				time.Sleep(time.Until(next))
+				continue
+			}
+			firstRun = false
 
 			started := time.Now()
 			a.setMonitorStatus(func(status *MonitorStatus) {
@@ -378,9 +553,12 @@ func (a *App) ensureReady(id string, cfg ContainerConfig, settings Settings) map
 		container, running, err := a.inspect(id)
 		if err != nil {
 			_ = a.appendLog("error", "Inspect failed", map[string]string{"id": id, "error": err.Error()})
-			return map[string]any{"id": id, "status": "error", "attempts": attempts, "error": err.Error()}
+			if strings.Contains(err.Error(), "HTTP 404") {
+				return map[string]any{"id": id, "name": cfg.Name, "status": "missing", "attempts": attempts, "error": err.Error()}
+			}
+			return map[string]any{"id": id, "name": cfg.Name, "status": "error", "attempts": attempts, "error": err.Error()}
 		}
-		if ready(container, running) {
+		if ready(container, running, cfg.ReadinessMode) {
 			_ = a.appendLog("status_check", container.Name+" is ready", nil)
 			return map[string]any{"id": id, "name": container.Name, "status": "ready", "attempts": attempts}
 		}
@@ -391,6 +569,10 @@ func (a *App) ensureReady(id string, cfg ContainerConfig, settings Settings) map
 				return map[string]any{"id": id, "name": container.Name, "status": "error", "attempts": attempts, "error": err.Error()}
 			}
 		} else if container.Health != "" && container.Health != "none" && container.Health != "healthy" {
+			if cfg.FailurePolicy == policyLog {
+				_ = a.appendLog("error", "Unhealthy "+container.Name+" requires manual action", map[string]string{"id": id, "health": container.Health})
+				return map[string]any{"id": id, "name": container.Name, "status": "blocked", "attempts": attempts, "error": "unhealthy and policy is log"}
+			}
 			_ = a.appendLog("restart", "Restarting unhealthy "+container.Name, nil)
 			if err := a.docker("POST", "/containers/"+id+"/restart", nil, nil); err != nil {
 				_ = a.appendLog("error", "Restart failed", map[string]string{"id": id, "error": err.Error()})
@@ -429,9 +611,15 @@ func resultError(result map[string]any) string {
 	return ""
 }
 
-func ready(container Container, running bool) bool {
+func ready(container Container, running bool, mode string) bool {
 	if !running && container.State != "running" {
 		return false
+	}
+	switch normalizeReadinessMode(mode) {
+	case readinessRunning:
+		return running || container.State == "running"
+	case readinessHealthy:
+		return container.Health == "healthy"
 	}
 	if container.Health != "" && container.Health != "none" {
 		return container.Health == "healthy"
@@ -496,14 +684,22 @@ func (a *App) writeConfigLocked(cfg Config) error {
 }
 
 func normalizeConfig(cfg Config) Config {
+	isLegacy := cfg.Version < currentConfigVersion
 	out := Config{
-		Version: 1,
+		Version: currentConfigVersion,
 		Settings: Settings{
 			CheckIntervalSeconds:     clamp(cfg.Settings.CheckIntervalSeconds, 60, 10, 3600),
 			StartupRetryDelaySeconds: clamp(cfg.Settings.StartupRetryDelaySeconds, 10, 3, 600),
 			StartupTimeoutSeconds:    clamp(cfg.Settings.StartupTimeoutSeconds, 120, 15, 3600),
+			AutoRunOnStart:           cfg.Settings.AutoRunOnStart,
+			ProtectManagerContainers: cfg.Settings.ProtectManagerContainers,
+			LogRetentionLines:        clamp(cfg.Settings.LogRetentionLines, 500, 100, 5000),
 		},
 		Containers: map[string]ContainerConfig{},
+	}
+	if isLegacy {
+		out.Settings.AutoRunOnStart = true
+		out.Settings.ProtectManagerContainers = true
 	}
 	for id, item := range cfg.Containers {
 		if id == "" {
@@ -511,12 +707,18 @@ func normalizeConfig(cfg Config) Config {
 		}
 		out.Containers[id] = ContainerConfig{
 			Enabled:             item.Enabled,
+			Name:                item.Name,
+			Image:               item.Image,
 			StartupOrder:        clamp(item.StartupOrder, 0, 0, 999999),
 			StartupDelaySeconds: clamp(item.StartupDelaySeconds, 0, 0, 3600),
 			Monitor:             item.Monitor,
+			ReadinessMode:       normalizeReadinessMode(item.ReadinessMode),
+			FailurePolicy:       normalizeFailurePolicy(item.FailurePolicy),
 		}
 		if !item.Enabled {
-			out.Containers[id] = ContainerConfig{Enabled: false, StartupOrder: out.Containers[id].StartupOrder, StartupDelaySeconds: out.Containers[id].StartupDelaySeconds, Monitor: item.Monitor}
+			normalized := out.Containers[id]
+			normalized.Enabled = false
+			out.Containers[id] = normalized
 		}
 	}
 	return out
@@ -531,12 +733,96 @@ func mergeDiscovered(cfg Config, containers []Container) Config {
 		}
 	}
 	for _, container := range containers {
-		if _, ok := cfg.Containers[container.ID]; !ok {
+		item, ok := cfg.Containers[container.ID]
+		if !ok {
 			maxOrder += 10
-			cfg.Containers[container.ID] = ContainerConfig{Enabled: true, StartupOrder: maxOrder, StartupDelaySeconds: 0, Monitor: true}
+			cfg.Containers[container.ID] = ContainerConfig{
+				Enabled:             true,
+				Name:                container.Name,
+				Image:               container.Image,
+				StartupOrder:        maxOrder,
+				StartupDelaySeconds: 0,
+				Monitor:             true,
+				ReadinessMode:       readinessAuto,
+				FailurePolicy:       policyRetry,
+			}
+			continue
 		}
+		item.Name = container.Name
+		item.Image = container.Image
+		item.ReadinessMode = normalizeReadinessMode(item.ReadinessMode)
+		item.FailurePolicy = normalizeFailurePolicy(item.FailurePolicy)
+		cfg.Containers[container.ID] = item
 	}
 	return cfg
+}
+
+func withConfiguredEntries(cfg Config, containers []Container) []Container {
+	out := make([]Container, 0, len(containers)+len(cfg.Containers))
+	seen := map[string]bool{}
+	for _, container := range containers {
+		item := cfg.Containers[container.ID]
+		container.Config = item
+		container.Protected = cfg.Settings.ProtectManagerContainers && isManagerContainer(container.Name, container.Image)
+		out = append(out, container)
+		seen[container.ID] = true
+	}
+	for id, item := range cfg.Containers {
+		if seen[id] {
+			continue
+		}
+		out = append(out, Container{
+			ID:        id,
+			Name:      fallback(item.Name, id),
+			Image:     item.Image,
+			State:     "missing",
+			Status:    "Not discovered",
+			Health:    "none",
+			Running:   false,
+			Missing:   true,
+			Protected: cfg.Settings.ProtectManagerContainers && isManagerContainer(item.Name, item.Image),
+			Config:    item,
+		})
+	}
+	sort.SliceStable(out, func(i, j int) bool {
+		left := out[i].Config.StartupOrder
+		right := out[j].Config.StartupOrder
+		if left != right {
+			return left < right
+		}
+		return out[i].Name < out[j].Name
+	})
+	return out
+}
+
+func normalizeReadinessMode(value string) string {
+	switch value {
+	case readinessRunning, readinessHealthy:
+		return value
+	default:
+		return readinessAuto
+	}
+}
+
+func normalizeFailurePolicy(value string) string {
+	switch value {
+	case policyLog:
+		return value
+	default:
+		return policyRetry
+	}
+}
+
+func isManagerContainer(name, image string) bool {
+	text := strings.ToLower(name + " " + image)
+	return strings.Contains(text, "docker-manager") || strings.Contains(text, "fnos-docker-manager")
+}
+
+func fallback(value, fallbackValue string) string {
+	if value == "" {
+		return fallbackValue
+	}
+	return value
 }
 
 func clamp(value, fallback, min, max int) int {
@@ -563,8 +849,10 @@ func (a *App) appendLog(kind, message string, data map[string]string) error {
 		return err
 	}
 	defer file.Close()
-	_, err = file.Write(append(encoded, '\n'))
-	return err
+	if _, err = file.Write(append(encoded, '\n')); err != nil {
+		return err
+	}
+	return a.trimLogs(500)
 }
 
 func (a *App) readLogs() []map[string]any {
@@ -581,6 +869,33 @@ func (a *App) readLogs() []map[string]any {
 		}
 	}
 	return out
+}
+
+func (a *App) clearLogs() error {
+	if err := os.MkdirAll(filepath.Dir(a.logPath), 0755); err != nil {
+		return err
+	}
+	return os.WriteFile(a.logPath, nil, 0644)
+}
+
+func (a *App) trimLogs(limit int) error {
+	if limit <= 0 {
+		return nil
+	}
+	data, err := os.ReadFile(a.logPath)
+	if err != nil {
+		return nil
+	}
+	text := strings.TrimSpace(string(data))
+	if text == "" {
+		return nil
+	}
+	lines := strings.Split(text, "\n")
+	if len(lines) <= limit {
+		return nil
+	}
+	lines = lines[len(lines)-limit:]
+	return os.WriteFile(a.logPath, []byte(strings.Join(lines, "\n")+"\n"), 0644)
 }
 
 func (a *App) serveStatic(w http.ResponseWriter, r *http.Request, pathName string) {
