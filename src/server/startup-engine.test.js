@@ -18,6 +18,42 @@ test("sortConfiguredContainers uses ascending order then id", () => {
   );
 });
 
+test("monitor-only startup uses guarded containers even when they are not in startup plan", async () => {
+  const actions = [];
+  const docker = {
+    async inspectContainer(id) {
+      actions.push(`inspect:${id}`);
+      return { id, name: id, running: true, health: "none" };
+    },
+    async startContainer(id) {
+      actions.push(`start:${id}`);
+    },
+  };
+  const log = { async append() {} };
+  const engine = new StartupEngine({ docker, log, sleepFn: async () => {} });
+
+  const result = await engine.runOrderedStartup(
+    {
+      settings: {
+        startupTimeoutSeconds: 1,
+        startupRetryDelaySeconds: 1,
+      },
+      containers: {
+        startupOnly: { enabled: true, monitor: false, startupOrder: 1, startupDelaySeconds: 0 },
+        guardOnly: { enabled: false, monitor: true, startupOrder: 2, startupDelaySeconds: 0 },
+        unmanaged: { enabled: false, monitor: false, startupOrder: 3, startupDelaySeconds: 0 },
+      },
+    },
+    { monitorOnly: true },
+  );
+
+  assert.deepEqual(
+    result.results.map((item) => item.id),
+    ["guardOnly"],
+  );
+  assert.deepEqual(actions, ["inspect:guardOnly"]);
+});
+
 test("isReady requires healthy when Docker health exists", () => {
   assert.equal(isReady({ running: true, health: "healthy" }), true);
   assert.equal(isReady({ running: true, health: "unhealthy" }), false);

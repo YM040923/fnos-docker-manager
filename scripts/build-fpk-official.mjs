@@ -7,8 +7,8 @@ const pkg = JSON.parse(fs.readFileSync(path.join(root, "package.json"), "utf8"))
 const fnpack = process.env.FNPACK_EXE || path.join(root, "tools", "fnpack-user.exe");
 const sourceDir = path.join(root, "dist", "fnos", "fnpack-src");
 const outDir = path.join(root, "dist", "fnos");
-const officialFile = path.join(outDir, `DockerManager-${pkg.version}-fnpack-raw-x86_64.fpk`);
-const finalFile = path.join(outDir, `DockerManager-${pkg.version}-fnpack-fixed-x86_64.fpk`);
+const officialFile = path.join(outDir, `DockerStart-${pkg.version}-fnpack-raw-x86_64.fpk`);
+const finalFile = path.join(outDir, `DockerStart-${pkg.version}-fnpack-fixed-x86_64.fpk`);
 
 function run(command, args) {
   const result = spawnSync(command, args, { cwd: root, stdio: "inherit" });

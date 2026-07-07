@@ -1,0 +1,164 @@
+#!/usr/bin/env bash
+set -euo pipefail
+
+appname="${TRIM_APPNAME:-dockerstart}"
+cmd_dir="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
+package_root="$(cd "${cmd_dir}/.." && pwd)"
+app_dest="${TRIM_APPDEST:-${package_root}/target}"
+app_install_root="$(dirname "$app_dest")"
+icon_dir="${app_dest}/ui/images"
+web_icon_dir="${app_dest}/www/images"
+var_dir="${TRIM_PKGVAR:-${package_root}/var}"
+log_file="${var_dir}/icon-sync.log"
+
+mkdir -p "$(dirname "$log_file")" 2>/dev/null || true
+
+log_msg() {
+  local message="[Docker Manager icon-sync] $*"
+  printf '%s %s\n' "$(date '+%Y-%m-%d %H:%M:%S')" "$message" >> "$log_file" 2>/dev/null || true
+  if [ -n "${TRIM_TEMP_LOGFILE:-}" ]; then
+    printf '%s\n' "$message" >> "$TRIM_TEMP_LOGFILE" 2>/dev/null || true
+  fi
+}
+
+copy_icon() {
+  local src="$1"
+  local dest="$2"
+  [ -f "$src" ] || return 0
+  mkdir -p "$(dirname "$dest")" 2>/dev/null || true
+  if install -m 0644 "$src" "$dest" 2>/dev/null; then
+    log_msg "copied $(basename "$src") -> $dest"
+  else
+    log_msg "skip $dest"
+  fi
+}
+
+copy_pair_to_root() {
+  local dest_dir="$1"
+  [ -n "$dest_dir" ] || return 0
+  mkdir -p "$dest_dir" 2>/dev/null || true
+  copy_icon "${icon_dir}/icon_64.png" "${dest_dir}/ICON.PNG"
+  copy_icon "${icon_dir}/icon_256.png" "${dest_dir}/ICON_256.PNG"
+}
+
+copy_pair_to_meta() {
+  local dest_dir="$1"
+  [ -n "$dest_dir" ] || return 0
+  mkdir -p "$dest_dir" 2>/dev/null || true
+  for name in ICON.PNG icon_64.png docker-manager-3d_64.png; do
+    copy_icon "${icon_dir}/icon_64.png" "${dest_dir}/${name}"
+  done
+  for name in ICON_256.PNG icon.png icon_256.png docker-manager-3d.png docker-manager-3d_256.png; do
+    copy_icon "${icon_dir}/icon_256.png" "${dest_dir}/${name}"
+  done
+}
+
+copy_to_cached_png() {
+  local dest="$1"
+  local base
+  base="$(basename "$dest")"
+  case "$base" in
+    ICON.PNG|icon_64.png|docker-manager-3d_64.png|*64*.png)
+      copy_icon "${icon_dir}/icon_64.png" "$dest"
+      ;;
+    *.png|*.PNG)
+      copy_icon "${icon_dir}/icon_256.png" "$dest"
+      ;;
+  esac
+}
+
+sync_cached_icon_files() {
+  # Keep legacy ids here because old installed builds used the previous app name.
+  for launch_id in "dockerstart.Application" "dockermanager.Application" "dockermanager.Manager"; do
+    log_msg "sync cache for ${launch_id}"
+  done
+
+  for cache_root in \
+    /var/apps \
+    /var/cache \
+    /vol*/appcenter-downloads \
+    /vol*/@appcenter \
+    /vol*/@appmeta \
+    /vol*/@appconf \
+    /vol*/@appdata \
+    /vol*/@apptemp \
+    /vol*/@apphome
+  do
+    case "$cache_root" in
+      *'*'*) continue ;;
+    esac
+    [ -d "$cache_root" ] || continue
+    while IFS= read -r -d '' cache_item; do
+      if [ -d "$cache_item" ]; then
+        copy_pair_to_meta "$cache_item"
+        while IFS= read -r -d '' cached_png; do
+          copy_to_cached_png "$cached_png"
+        done < <(find "$cache_item" -maxdepth 3 -type f \( -iname '*.png' -o -iname 'ICON.PNG' -o -iname 'ICON_256.PNG' \) -print0 2>/dev/null)
+      elif [ -f "$cache_item" ]; then
+        copy_to_cached_png "$cache_item"
+      fi
+    done < <(find "$cache_root" -maxdepth 5 \( \
+      -iname '*dockerstart*' -o \
+      -iname '*dockermanager*' -o \
+      -iname '*docker-manager*' -o \
+      -iname '*ym040923.docker-manager*' \
+    \) -print0 2>/dev/null)
+  done
+}
+
+if [ ! -f "${icon_dir}/icon_64.png" ] || [ ! -f "${icon_dir}/icon_256.png" ]; then
+  log_msg "missing runtime icons in ${icon_dir}"
+  exit 0
+fi
+
+log_msg "start appname=${appname} app_dest=${app_dest}"
+
+copy_pair_to_root "/var/apps/${appname}"
+copy_pair_to_root "$package_root"
+copy_pair_to_root "$app_install_root"
+
+for legacy_appname in "dockermanager" "ym040923.docker-manager" "docker-manager"; do
+  [ -d "/var/apps/${legacy_appname}" ] && copy_pair_to_root "/var/apps/${legacy_appname}"
+done
+
+for name in icon_64.png docker-manager-3d_64.png; do
+  copy_icon "${icon_dir}/icon_64.png" "${icon_dir}/${name}"
+  [ -d "$web_icon_dir" ] && copy_icon "${icon_dir}/icon_64.png" "${web_icon_dir}/${name}"
+done
+for name in icon.png icon_256.png docker-manager-3d.png docker-manager-3d_256.png; do
+  copy_icon "${icon_dir}/icon_256.png" "${icon_dir}/${name}"
+  [ -d "$web_icon_dir" ] && copy_icon "${icon_dir}/icon_256.png" "${web_icon_dir}/${name}"
+done
+
+for meta_path in \
+  "${TRIM_PKGMETA:-}" \
+  "${package_root}/meta" \
+  "${app_install_root}/meta" \
+  "/var/apps/${appname}/meta" \
+  /vol*/@appcenter/"${appname}" \
+  /vol*/@appmeta/"${appname}" \
+  /vol*/@appconf/"${appname}" \
+  /vol*/@appdata/"${appname}" \
+  /vol*/@apptemp/"${appname}" \
+  /vol*/@apphome/"${appname}"
+do
+  case "$meta_path" in
+    *'*'*) continue ;;
+  esac
+  [ -e "$meta_path" ] || continue
+  copy_pair_to_meta "$meta_path"
+done
+
+for legacy_appname in "dockermanager" "ym040923.docker-manager" "docker-manager"; do
+  for meta_path in /var/apps/"${legacy_appname}"/meta /vol*/@appcenter/"${legacy_appname}" /vol*/@appmeta/"${legacy_appname}"; do
+    case "$meta_path" in
+      *'*'*) continue ;;
+    esac
+    [ -e "$meta_path" ] || continue
+    copy_pair_to_meta "$meta_path"
+  done
+done
+
+sync_cached_icon_files
+
+log_msg "done"

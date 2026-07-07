@@ -4,33 +4,25 @@
     <meta charset="utf-8" />
     <meta name="viewport" content="width=device-width, initial-scale=1" />
     <title>Docker Manager</title>
-    <link rel="icon" href="data:," />
-    <link rel="stylesheet" href="/app/dockermanager/styles.css" />
+    <link rel="icon" href="/app/dockerstart/images/docker-manager-3d_64.png?v=0.6.1" />
+    <link rel="stylesheet" href="/app/dockerstart/styles.css?v=0.6.1" />
+    <link rel="stylesheet" href="/app/dockerstart/theme.css?v=0.6.1" />
   </head>
   <body>
     <div class="app-frame">
       <aside class="sidebar">
-        <div class="sidebar-brand">
-          <div class="brand-mark" aria-hidden="true">
-            <svg viewBox="0 0 64 64">
-              <path class="brand-accent" d="M18 15c-5 6-5 13 0 19" />
-              <path d="M26 15h22v14H35v8h11v9H27V30H16V19h10z" />
-            </svg>
-          </div>
-          <strong>Docker Manager</strong>
-        </div>
         <nav class="nav" aria-label="主导航">
-          <button class="nav-item active" type="button" data-view="dashboard">
+          <button class="nav-item active" type="button" data-view="dashboard" aria-current="page">
             <span class="nav-icon" aria-hidden="true"><svg viewBox="0 0 24 24"><path d="M4 5h7v7H4zM13 5h7v7h-7zM4 14h7v5H4zM13 14h7v5h-7z" /></svg></span>
             控制台
           </button>
-          <button class="nav-item" type="button" data-view="plan">
+          <button class="nav-item" type="button" data-view="orchestration">
             <span class="nav-icon" aria-hidden="true"><svg viewBox="0 0 24 24"><path d="M7 4v16M7 4l-3 3M7 4l3 3M17 20V4M17 20l-3-3M17 20l3-3" /></svg></span>
-            启动编排
+            编排管理
           </button>
-          <button class="nav-item" type="button" data-view="containers">
-            <span class="nav-icon" aria-hidden="true"><svg viewBox="0 0 24 24"><path d="M4 7h16M4 12h16M4 17h16M7 4h10a3 3 0 0 1 3 3v10a3 3 0 0 1-3 3H7a3 3 0 0 1-3-3V7a3 3 0 0 1 3-3z" /></svg></span>
-            容器管理
+          <button class="nav-item" type="button" data-view="guard">
+            <span class="nav-icon" aria-hidden="true"><svg viewBox="0 0 24 24"><path d="M12 3 5 6v5c0 4.5 2.9 8.4 7 10 4.1-1.6 7-5.5 7-10V6z" /><path d="m9 12 2 2 4-5" /></svg></span>
+            守护管理
           </button>
           <button class="nav-item" type="button" data-view="logs">
             <span class="nav-icon" aria-hidden="true"><svg viewBox="0 0 24 24"><path d="M7 7h10M7 12h10M7 17h6M5 4h14a2 2 0 0 1 2 2v16l-4-3H5a2 2 0 0 1-2-2V6a2 2 0 0 1 2-2z" /></svg></span>
@@ -42,7 +34,7 @@
           </button>
         </nav>
         <div class="sidebar-footer">
-          <span>v0.3.1</span>
+          <span>v0.6.1</span>
           <button id="refreshBtn" type="button">刷新</button>
         </div>
       </aside>
@@ -63,28 +55,7 @@
             <span>范围：当前 NAS</span>
             <span>在线：<strong id="runningCount">0</strong></span>
           </div>
-          <section class="stat-grid" aria-label="运行概览">
-            <article class="stat-card">
-              <span>Docker 状态</span>
-              <strong id="dockerState">检查中</strong>
-              <p>Docker socket 访问状态</p>
-            </article>
-            <article class="stat-card">
-              <span>后台守护</span>
-              <strong id="monitorState">检查中</strong>
-              <p>顺序巡检和自动恢复</p>
-            </article>
-            <article class="stat-card">
-              <span>容器总数</span>
-              <strong id="containerCount">0</strong>
-              <p>已发现和已记录容器</p>
-            </article>
-            <article class="stat-card">
-              <span>需要处理</span>
-              <strong id="badCount">0</strong>
-              <p>停止、异常或已失联</p>
-            </article>
-          </section>
+          <section id="statGrid" class="stat-grid" aria-label="运行概览"></section>
 
           <section class="dashboard-grid">
             <article class="panel">
@@ -121,42 +92,77 @@
           </section>
         </section>
 
-        <section id="planView" class="view">
+        <section id="orchestrationView" class="view">
           <section class="panel">
             <div class="panel-head">
               <div>
-                <h2>启动编排</h2>
-                <p>只显示已纳入编排的容器。拖动左侧手柄调整启动顺序，上面的容器会先启动。</p>
+                <h2>编排管理</h2>
+                <p>点击容器卡片切换是否参与启动编排。选中的容器会按序号依次启动，未选中的容器不会被编排处理。</p>
               </div>
-              <button id="saveBtn" type="button">保存配置</button>
-            </div>
-            <div class="hint">提示：这里不再手填 10、20 这类排序值。需要开机编排的容器先在“容器管理”里打开“纳入编排”，再回到这里拖拽排序。</div>
-            <div id="planRows" class="plan-list"></div>
-          </section>
-        </section>
-
-        <section id="containersView" class="view">
-          <section class="panel">
-            <div class="panel-head">
-              <div>
-                <h2>容器管理</h2>
-                <p>决定哪些容器参与开机启动编排，以及哪些容器交给后台巡检守护。</p>
+              <div class="panel-actions">
+                <label class="compact-select">每行列数
+                  <select id="orchestrationColumns" aria-label="编排管理每行列数">
+                    <option value="1">1 列</option>
+                    <option value="2">2 列</option>
+                    <option value="3" selected>3 列</option>
+                    <option value="4">4 列</option>
+                  </select>
+                </label>
+                <button id="saveBtn" type="button">保存配置</button>
               </div>
-              <button id="saveContainerPolicyBtn" type="button">保存选择</button>
             </div>
-            <div class="toolbar">
-              <input id="searchInput" type="search" placeholder="搜索名称、镜像、ID 或 Compose 信息" />
-              <select id="statusFilter" aria-label="状态筛选">
+            <div class="manager-summary">
+              <strong>已编排 <span id="orchestrationCount">0</span></strong>
+              <span>新选中的容器会追加到队尾。延迟只对已编排容器生效。</span>
+            </div>
+            <div class="toolbar manager-toolbar">
+              <input id="orchestrationSearchInput" type="search" placeholder="搜索容器名称" />
+              <select id="orchestrationStatusFilter" aria-label="编排管理状态筛选">
                 <option value="all">全部状态</option>
                 <option value="running">运行正常</option>
                 <option value="problem">需要处理</option>
                 <option value="stopped">已停止</option>
-                <option value="missing">已失联</option>
               </select>
-              <label class="switch"><input id="monitoredOnly" type="checkbox" />只看已守护</label>
             </div>
-            <div id="inventoryRows" class="inventory-list"></div>
-            <div id="emptyState" class="empty hidden">没有符合条件的容器。</div>
+            <div id="orchestrationRows" class="selection-grid cols-3"></div>
+            <div id="orchestrationEmptyState" class="empty hidden">没有符合条件的容器。</div>
+          </section>
+        </section>
+
+        <section id="guardView" class="view">
+          <section class="panel">
+            <div class="panel-head">
+              <div>
+                <h2>守护管理</h2>
+                <p>点击容器卡片切换是否由后台巡检守护。选中的容器异常或停止时，守护会按启动链顺序尝试恢复。</p>
+              </div>
+              <div class="panel-actions">
+                <label class="compact-select">每行列数
+                  <select id="guardColumns" aria-label="守护管理每行列数">
+                    <option value="1">1 列</option>
+                    <option value="2">2 列</option>
+                    <option value="3" selected>3 列</option>
+                    <option value="4">4 列</option>
+                  </select>
+                </label>
+                <button id="saveGuardBtn" type="button">保存配置</button>
+              </div>
+            </div>
+            <div class="manager-summary">
+              <strong>已守护 <span id="guardCount">0</span></strong>
+              <span>未选中的容器只显示状态，不会被后台自动恢复。</span>
+            </div>
+            <div class="toolbar manager-toolbar">
+              <input id="guardSearchInput" type="search" placeholder="搜索容器名称" />
+              <select id="guardStatusFilter" aria-label="守护管理状态筛选">
+                <option value="all">全部状态</option>
+                <option value="running">运行正常</option>
+                <option value="problem">需要处理</option>
+                <option value="stopped">已停止</option>
+              </select>
+            </div>
+            <div id="guardRows" class="selection-grid cols-3"></div>
+            <div id="guardEmptyState" class="empty hidden">没有符合条件的容器。</div>
           </section>
         </section>
 
@@ -188,7 +194,7 @@
               <label>重试间隔（秒）<input id="retryDelay" type="number" min="3" max="600" /></label>
               <label>启动超时（秒）<input id="startupTimeout" type="number" min="15" max="3600" /></label>
               <label>日志保留（行）<input id="logRetention" type="number" min="100" max="5000" /></label>
-              <label class="switch wide"><input id="autoRunOnStart" type="checkbox" />应用启动后立即巡检</label>
+              <label class="switch wide"><input id="autoRunOnStart" type="checkbox" />NAS 开机后自动执行一次启动编排</label>
               <label class="switch wide"><input id="protectManager" type="checkbox" />保护 Docker Manager 容器</label>
               <div class="settings-actions">
                 <button id="saveSettingsBtn" class="primary" type="button">保存设置</button>
@@ -225,8 +231,8 @@
     </div>
 
     <script>
-      window.DOCKER_MANAGER_BASE = "/app/dockermanager";
+      window.DOCKER_MANAGER_BASE = "/app/dockerstart";
     </script>
-    <script type="module" src="/app/dockermanager/app.js"></script>
+    <script type="module" src="/app/dockerstart/app.js?v=0.6.1"></script>
   </body>
 </html>

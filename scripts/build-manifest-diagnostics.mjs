@@ -37,7 +37,7 @@ function replaceInFile(file, replacements) {
 
 function buildAndFix(src, outputName) {
   run(fnpack, ["build", "-d", src]);
-  const raw = path.join(root, "dockermanager.fpk");
+  const raw = path.join(root, "dockerstart.fpk");
   const rawOut = path.join(dist, `${outputName}-raw.fpk`);
   const fixedOut = path.join(dist, `${outputName}.fpk`);
   fs.copyFileSync(raw, rawOut);
@@ -54,52 +54,52 @@ function createProbe(name, mutate) {
   buildAndFix(app, `ManifestProbe-${name}`);
 }
 
-createProbe("dockermanager-name", (app) => {
+createProbe("dockerstart-name", (app) => {
   replaceInFile(path.join(app, "manifest"), [
-    ["App.Native.ProbeInstall", "dockermanager"],
-    ["display-name", "dockermanager"],
-    ["app-description", "dockermanager"],
+    ["App.Native.ProbeInstall", "dockerstart"],
+    ["display-name", "dockerstart"],
+    ["app-description", "dockerstart"],
   ]);
   replaceInFile(path.join(app, "app", "ui", "config"), [
-    ["App.Native.ProbeInstall.Application", "dockermanager.Application"],
-    ["App.Native.ProbeInstall", "dockermanager"],
+    ["App.Native.ProbeInstall.Application", "dockerstart.Application"],
+    ["App.Native.ProbeInstall", "dockerstart"],
   ]);
   replaceInFile(path.join(app, "config", "resource"), [
-    ["App.Native.ProbeInstall", "dockermanager"],
+    ["App.Native.ProbeInstall", "dockerstart"],
   ]);
 });
 
-createProbe("dockermanager-platform", (app) => {
+createProbe("dockerstart-platform", (app) => {
   replaceInFile(path.join(app, "manifest"), [
-    ["App.Native.ProbeInstall", "dockermanager"],
-    ["display-name", "dockermanager"],
-    ["app-description", "dockermanager"],
+    ["App.Native.ProbeInstall", "dockerstart"],
+    ["display-name", "dockerstart"],
+    ["app-description", "dockerstart"],
     ["arch                  = x86_64", "platform              = x86\narch                  = x86_64"],
-    ["desktop_applaunchname = dockermanager.Application", "desktop_applaunchname = dockermanager.Application\ncheckport             = false"],
+    ["desktop_applaunchname = dockerstart.Application", "desktop_applaunchname = dockerstart.Application\ncheckport             = false"],
   ]);
   replaceInFile(path.join(app, "app", "ui", "config"), [
-    ["App.Native.ProbeInstall.Application", "dockermanager.Application"],
-    ["App.Native.ProbeInstall", "dockermanager"],
+    ["App.Native.ProbeInstall.Application", "dockerstart.Application"],
+    ["App.Native.ProbeInstall", "dockerstart"],
   ]);
   replaceInFile(path.join(app, "config", "resource"), [
-    ["App.Native.ProbeInstall", "dockermanager"],
+    ["App.Native.ProbeInstall", "dockerstart"],
   ]);
 });
 
 createProbe("docker-manager-meta", (app) => {
   replaceInFile(path.join(app, "manifest"), [
-    ["App.Native.ProbeInstall", "dockermanager"],
+    ["App.Native.ProbeInstall", "dockerstart"],
     ["version               = 1.0.0", "version               = 0.1.5"],
     ["display-name", "Docker Manager"],
     ["app-description", "Docker container startup order and monitoring manager"],
     ["your-name", "YM040923"],
   ]);
   replaceInFile(path.join(app, "app", "ui", "config"), [
-    ["App.Native.ProbeInstall.Application", "dockermanager.Application"],
+    ["App.Native.ProbeInstall.Application", "dockerstart.Application"],
     ["App.Native.ProbeInstall", "Docker Manager"],
   ]);
   replaceInFile(path.join(app, "config", "resource"), [
-    ["App.Native.ProbeInstall", "dockermanager"],
+    ["App.Native.ProbeInstall", "dockerstart"],
   ]);
 });
 
@@ -114,4 +114,4 @@ const templateManifest = read(manifestPath)
   .filter((line) => !line.startsWith("platform") && !line.startsWith("checkport"))
   .join("\n");
 write(manifestPath, templateManifest);
-buildAndFix(templateManifestSource, "DockerManager-0.1.4-template-manifest");
+buildAndFix(templateManifestSource, "DockerStart-0.1.4-template-manifest");

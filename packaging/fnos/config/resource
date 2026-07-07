@@ -4,22 +4,22 @@
     "shares":
     [
       {
-        "name": "dockermanager",
+        "name": "dockerstart",
         "permission":
         {
           "rw":
           [
-            "dockermanager"
+            "dockerstart"
           ]
         }
       },
       {
-        "name": "dockermanager/data",
+        "name": "dockerstart/data",
         "permission":
         {
           "rw":
           [
-            "dockermanager"
+            "dockerstart"
           ]
         }
       }

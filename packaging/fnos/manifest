@@ -1,10 +1,10 @@
-appname               = dockermanager
+appname               = dockerstart
 version               = __VERSION__
 display_name          = Docker Manager
-desc                  = Docker 容器启动编排与运行监控工具
+desc                  = Docker container startup orchestration and runtime monitor
 arch                  = x86_64
 source                = thirdparty
 maintainer            = YM040923
 distributor           = YM040923
 desktop_uidir         = ui
-desktop_applaunchname = dockermanager.Application
+desktop_applaunchname = dockerstart.Application

@@ -5,7 +5,7 @@ ROOT="$(cd "$(dirname "${BASH_SOURCE[0]}")/../.." && pwd)"
 VERSION="$(node -e "console.log(JSON.parse(require('fs').readFileSync('package.json','utf8')).version)")"
 RUNTIME="$ROOT/dist/fnos/runtime"
 WORK="$ROOT/dist/fnos/fpk-work"
-OUT="$ROOT/dist/fnos/DockerManager-${VERSION}-x86_64.fpk"
+OUT="$ROOT/dist/fnos/DockerStart-${VERSION}-x86_64.fpk"
 
 resolve_fnpack() {
   if [ -n "${FNPACK:-}" ]; then

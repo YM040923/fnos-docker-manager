@@ -4,7 +4,18 @@ function sleep(ms) {
 
 export function sortConfiguredContainers(config) {
   return Object.entries(config.containers || {})
-    .filter(([, item]) => item.enabled !== false)
+    .filter(([, item]) => item.enabled === true)
+    .sort((a, b) => {
+      const orderDelta = a[1].startupOrder - b[1].startupOrder;
+      if (orderDelta !== 0) return orderDelta;
+      return a[0].localeCompare(b[0]);
+    })
+    .map(([id, item]) => ({ id, ...item }));
+}
+
+export function sortMonitoredContainers(config) {
+  return Object.entries(config.containers || {})
+    .filter(([, item]) => item.monitor === true)
     .sort((a, b) => {
       const orderDelta = a[1].startupOrder - b[1].startupOrder;
       if (orderDelta !== 0) return orderDelta;
@@ -33,7 +44,7 @@ export class StartupEngine {
     }
     this.running = true;
     const settings = config.settings;
-    const ordered = sortConfiguredContainers(config).filter((item) => (monitorOnly ? item.monitor !== false : true));
+    const ordered = monitorOnly ? sortMonitoredContainers(config) : sortConfiguredContainers(config);
     const results = [];
 
     try {
@@ -78,4 +89,3 @@ export class StartupEngine {
     return { id, status: "timeout", attempts };
   }
 }
-

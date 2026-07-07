@@ -1,4 +1,31 @@
 #!/usr/bin/env bash
 set -euo pipefail
-echo "Docker Manager upgrade init"
 
+var_dir="${TRIM_PKGVAR:-}"
+if [ -z "$var_dir" ]; then
+  var_dir="$(cd "$(dirname "${BASH_SOURCE[0]}")/.." && pwd)/var"
+fi
+run_dir="$var_dir/run"
+pid_file="$run_dir/app.pid"
+restart_flag="$run_dir/restart-after-upgrade"
+mkdir -p "$run_dir"
+
+if [ -f "$pid_file" ]; then
+  pid="$(head -n 1 "$pid_file" | tr -d '[:space:]' || true)"
+  if [ -n "$pid" ] && kill -0 "$pid" 2>/dev/null; then
+    printf '1\n' > "$restart_flag"
+    kill -TERM "$pid" 2>/dev/null || true
+    count=0
+    while kill -0 "$pid" 2>/dev/null && [ "$count" -lt 10 ]; do
+      sleep 1
+      count=$((count + 1))
+    done
+    if kill -0 "$pid" 2>/dev/null; then
+      kill -KILL "$pid" 2>/dev/null || true
+    fi
+  fi
+  rm -f "$pid_file"
+fi
+
+rm -f "${TRIM_APPDEST:-}/app.sock" 2>/dev/null || true
+echo "Docker Manager upgrade init"

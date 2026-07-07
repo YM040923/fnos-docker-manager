@@ -37,7 +37,7 @@ export function normalizeConfig(input = {}) {
   for (const [id, container] of Object.entries(containers)) {
     if (!id || typeof container !== "object" || container === null) continue;
     normalized.containers[id] = {
-      enabled: container.enabled !== false,
+      enabled: container.enabled === true,
       startupOrder: clampInteger(
         container.startupOrder,
         DEFAULT_CONTAINER_CONFIG.startupOrder,
@@ -48,7 +48,12 @@ export function normalizeConfig(input = {}) {
         DEFAULT_CONTAINER_CONFIG.startupDelaySeconds,
         LIMITS.startupDelaySeconds,
       ),
-      monitor: container.monitor !== false,
+      monitor: container.monitor === true,
+      monitorOrder: clampInteger(
+        container.monitorOrder ?? container.startupOrder,
+        DEFAULT_CONTAINER_CONFIG.monitorOrder,
+        LIMITS.monitorOrder,
+      ),
     };
   }
 
@@ -89,19 +94,24 @@ export class ConfigStore {
 
 export function mergeDiscoveredContainers(config, containers) {
   const next = normalizeConfig(config);
-  const existingOrders = Object.values(next.containers).map((item) => item.startupOrder);
+  const discoveredIds = new Set(containers.map((container) => container.id));
+  const retained = Object.fromEntries(Object.entries(next.containers).filter(([id]) => discoveredIds.has(id)));
+  const existingOrders = Object.values(retained).map((item) => item.startupOrder);
   let nextOrder = existingOrders.length > 0 ? Math.max(...existingOrders) + 10 : 10;
+  next.containers = {};
 
   for (const container of containers) {
-    if (!next.containers[container.id]) {
+    if (!retained[container.id]) {
       next.containers[container.id] = {
         ...DEFAULT_CONTAINER_CONFIG,
         startupOrder: nextOrder,
+        monitorOrder: nextOrder,
       };
       nextOrder += 10;
+    } else {
+      next.containers[container.id] = retained[container.id];
     }
   }
 
   return next;
 }
-

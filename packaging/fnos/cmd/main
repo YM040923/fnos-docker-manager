@@ -24,14 +24,17 @@ resolve_package_base() {
 PACKAGE_BASE="$(resolve_package_base)"
 APP_DIR="$(resolve_path "${DOCKER_MANAGER_APP_DIR:-${TRIM_APPDEST:-$PACKAGE_BASE}}")"
 VAR_DIR="$(resolve_path "${DOCKER_MANAGER_VAR_DIR:-${TRIM_PKGVAR:-$PACKAGE_BASE/var}}")"
+SCRIPT_PATH="$(resolve_path "${BASH_SOURCE[0]}")"
 RUN_DIR="$VAR_DIR/run"
 LOG_DIR="$VAR_DIR/logs"
+SERVICE_NAME="dockerstart.service"
+SERVICE_FILE="/etc/systemd/system/$SERVICE_NAME"
 
 export DOCKER_MANAGER_LOG_FILE="${DOCKER_MANAGER_LOG_FILE:-$LOG_DIR/service.log}"
 export DOCKER_MANAGER_PID_FILE="${DOCKER_MANAGER_PID_FILE:-$RUN_DIR/app.pid}"
 export DOCKER_MANAGER_SOCKET_FILE="${DOCKER_MANAGER_SOCKET_FILE:-$APP_DIR/app.sock}"
 export FNOS_SOCKET_PATH="$DOCKER_MANAGER_SOCKET_FILE"
-export FNOS_GATEWAY_PREFIX="${FNOS_GATEWAY_PREFIX:-/app/dockermanager}"
+export FNOS_GATEWAY_PREFIX="${FNOS_GATEWAY_PREFIX:-/app/dockerstart}"
 export FNOS_DATA_DIR="$VAR_DIR"
 export FNOS_WEB_DIR="${FNOS_WEB_DIR:-$APP_DIR/www}"
 export TRIM_APPDEST="$APP_DIR"
@@ -43,12 +46,27 @@ ensure_runtime_dirs() {
 
 ensure_runtime_dirs
 
+"$(dirname "${BASH_SOURCE[0]}")/icon_sync" >/dev/null 2>&1 || true
+
 export NODE_ENV=production
 
 CMD="$APP_DIR/server/docker-manager"
 
 log_msg() {
   echo "$(date '+%Y-%m-%d %H:%M:%S') - $1" >> "$DOCKER_MANAGER_LOG_FILE"
+}
+
+fail_visible() {
+  local message="$1"
+  log_msg "$message"
+  if [ -n "${TRIM_TEMP_LOGFILE:-}" ]; then
+    printf '%s\n' "$message" > "$TRIM_TEMP_LOGFILE" 2>/dev/null || true
+  fi
+  return 1
+}
+
+systemd_available() {
+  command -v systemctl >/dev/null 2>&1 && [ -d /etc/systemd/system ]
 }
 
 check_process() {
@@ -100,9 +118,68 @@ stop_process() {
   rm -f "$DOCKER_MANAGER_SOCKET_FILE"
 }
 
+install_autostart() {
+  if ! systemd_available; then
+    fail_visible "Docker Manager cannot register boot autostart: systemctl is unavailable"
+    return 1
+  fi
+
+  if ! cat > "$SERVICE_FILE" <<SERVICE
+[Unit]
+Description=Docker Manager fnOS background service
+After=network-online.target docker.service
+Wants=network-online.target docker.service
+
+[Service]
+Type=forking
+Environment="DOCKER_MANAGER_APP_DIR=$APP_DIR"
+Environment="DOCKER_MANAGER_VAR_DIR=$VAR_DIR"
+ExecStart=$SCRIPT_PATH start
+ExecStop=$SCRIPT_PATH stop
+PIDFile=$DOCKER_MANAGER_PID_FILE
+Restart=no
+TimeoutStartSec=60
+TimeoutStopSec=30
+
+[Install]
+WantedBy=multi-user.target
+SERVICE
+  then
+    fail_visible "Docker Manager cannot write boot autostart service: $SERVICE_FILE"
+    return 1
+  fi
+
+  chmod 0644 "$SERVICE_FILE" || {
+    fail_visible "Docker Manager cannot set boot service permissions: $SERVICE_FILE"
+    return 1
+  }
+  systemctl daemon-reload || {
+    fail_visible "Docker Manager cannot reload systemd after boot service registration"
+    return 1
+  }
+  systemctl enable "$SERVICE_NAME" || {
+    fail_visible "Docker Manager cannot enable boot autostart service: $SERVICE_NAME"
+    return 1
+  }
+  log_msg "Registered boot autostart service $SERVICE_NAME"
+}
+
+remove_autostart() {
+  if ! systemd_available; then
+    return 0
+  fi
+
+  systemctl disable "$SERVICE_NAME" >/dev/null 2>&1 || true
+  rm -f "$SERVICE_FILE"
+  systemctl daemon-reload || true
+  log_msg "Removed boot autostart service $SERVICE_NAME"
+}
+
 case "${1:-}" in
   start) start_process ;;
   stop) stop_process ;;
   status) status_process ;;
+  install-autostart) install_autostart ;;
+  remove-autostart) remove_autostart ;;
   *) exit 1 ;;
 esac

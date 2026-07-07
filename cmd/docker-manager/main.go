@@ -19,7 +19,7 @@ import (
 	"time"
 )
 
-const gatewayPrefix = "/app/dockermanager"
+const gatewayPrefix = "/app/dockerstart"
 const currentConfigVersion = 2
 
 const (
@@ -46,6 +46,7 @@ type ContainerConfig struct {
 	StartupOrder        int    `json:"startupOrder"`
 	StartupDelaySeconds int    `json:"startupDelaySeconds"`
 	Monitor             bool   `json:"monitor"`
+	MonitorOrder        int    `json:"monitorOrder,omitempty"`
 	ReadinessMode       string `json:"readinessMode"`
 	FailurePolicy       string `json:"failurePolicy"`
 }
@@ -115,6 +116,9 @@ type App struct {
 	runMu         sync.Mutex
 	monitorMu     sync.Mutex
 	monitorStatus MonitorStatus
+	bootIDPath    string
+	uptimePath    string
+	bootWindow    time.Duration
 }
 
 func main() {
@@ -124,6 +128,7 @@ func main() {
 	webDir := getenv("FNOS_WEB_DIR", filepath.Join(appDest, "web"))
 
 	app := NewApp(dataDir, webDir, getenv("DOCKER_SOCKET", "/var/run/docker.sock"))
+	app.startBootStartupOnce()
 	app.startMonitorLoop()
 	_ = os.Remove(socketPath)
 	if err := os.MkdirAll(filepath.Dir(socketPath), 0755); err != nil {
@@ -154,6 +159,9 @@ func NewApp(dataDir, webDir, dockerSock string) *App {
 		configPath: filepath.Join(dataDir, "config.json"),
 		logPath:    filepath.Join(dataDir, "logs", "activity.log"),
 		client:     &http.Client{Transport: transport, Timeout: 15 * time.Second},
+		bootIDPath: "/proc/sys/kernel/random/boot_id",
+		uptimePath: "/proc/uptime",
+		bootWindow: 30 * time.Minute,
 	}
 }
 
@@ -471,7 +479,7 @@ func (a *App) startMonitorLoop() {
 				time.Sleep(time.Until(next))
 				continue
 			}
-			if firstRun && !cfg.Settings.AutoRunOnStart {
+			if firstRun {
 				firstRun = false
 				next := time.Now().Add(time.Duration(cfg.Settings.CheckIntervalSeconds) * time.Second)
 				a.setMonitorStatus(func(status *MonitorStatus) {
@@ -481,7 +489,6 @@ func (a *App) startMonitorLoop() {
 				time.Sleep(time.Until(next))
 				continue
 			}
-			firstRun = false
 
 			started := time.Now()
 			a.setMonitorStatus(func(status *MonitorStatus) {
@@ -503,6 +510,130 @@ func (a *App) startMonitorLoop() {
 			time.Sleep(time.Until(next))
 		}
 	}()
+}
+
+func (a *App) startBootStartupOnce() {
+	go func() {
+		cfg, err := a.readConfig()
+		if err != nil {
+			_ = a.appendLog("error", "Boot startup config read failed", map[string]string{"error": err.Error()})
+			return
+		}
+		if !cfg.Settings.AutoRunOnStart {
+			_ = a.appendLog("startup", "Boot startup skipped by setting", nil)
+			return
+		}
+		inWindow, err := a.withinBootStartupWindow()
+		if err != nil {
+			_ = a.appendLog("error", "Boot startup uptime check failed", map[string]string{"error": err.Error()})
+			return
+		}
+		if !inWindow {
+			_ = a.appendLog("startup", "Boot startup skipped outside system boot window", nil)
+			return
+		}
+		if err := a.waitForDocker(cfg.Settings.StartupTimeoutSeconds); err != nil {
+			_ = a.appendLog("error", "Boot startup Docker wait failed", map[string]string{"error": err.Error()})
+			return
+		}
+		allowed, bootID, err := a.claimBootStartup()
+		if err != nil {
+			_ = a.appendLog("error", "Boot startup claim failed", map[string]string{"error": err.Error()})
+			return
+		}
+		if !allowed {
+			_ = a.appendLog("startup", "Boot startup already ran for this system boot", map[string]string{"bootID": bootID})
+			return
+		}
+
+		started := time.Now()
+		a.setMonitorStatus(func(status *MonitorStatus) {
+			status.Running = true
+			status.LastStartedAt = started.Format(time.RFC3339)
+			status.LastError = ""
+			status.NextCheckAt = ""
+		})
+		result := a.runOrderedStartup(cfg, false, "boot")
+		finished := time.Now()
+		a.setMonitorStatus(func(status *MonitorStatus) {
+			status.Running = false
+			status.LastFinishedAt = finished.Format(time.RFC3339)
+			status.LastResult = result
+			status.LastError = resultError(result)
+		})
+	}()
+}
+
+func (a *App) waitForDocker(timeoutSeconds int) error {
+	deadline := time.Now().Add(time.Duration(clamp(timeoutSeconds, 120, 15, 3600)) * time.Second)
+	var lastErr error
+	for time.Now().Before(deadline) {
+		if err := a.docker("GET", "/_ping", nil, nil); err == nil {
+			return nil
+		} else {
+			lastErr = err
+		}
+		time.Sleep(2 * time.Second)
+	}
+	if lastErr != nil {
+		return lastErr
+	}
+	return errors.New("docker did not become ready before timeout")
+}
+
+func (a *App) withinBootStartupWindow() (bool, error) {
+	if a.bootWindow <= 0 {
+		return true, nil
+	}
+	data, err := os.ReadFile(a.uptimePath)
+	if err != nil {
+		return false, err
+	}
+	fields := strings.Fields(string(data))
+	if len(fields) == 0 {
+		return false, errors.New("empty system uptime")
+	}
+	uptimeSeconds, err := strconv.ParseFloat(fields[0], 64)
+	if err != nil {
+		return false, err
+	}
+	return time.Duration(uptimeSeconds*float64(time.Second)) <= a.bootWindow, nil
+}
+
+func (a *App) bootMarkerPath() string {
+	return filepath.Join(a.dataDir, "run", "last_boot_startup.id")
+}
+
+func (a *App) currentBootID() (string, error) {
+	data, err := os.ReadFile(a.bootIDPath)
+	if err != nil {
+		return "", err
+	}
+	bootID := strings.TrimSpace(string(data))
+	if bootID == "" {
+		return "", errors.New("empty system boot id")
+	}
+	return bootID, nil
+}
+
+func (a *App) claimBootStartup() (bool, string, error) {
+	bootID, err := a.currentBootID()
+	if err != nil {
+		return false, "", err
+	}
+	markerPath := a.bootMarkerPath()
+	if data, err := os.ReadFile(markerPath); err == nil && strings.TrimSpace(string(data)) == bootID {
+		return false, bootID, nil
+	} else if err != nil && !errors.Is(err, os.ErrNotExist) {
+		return false, bootID, err
+	}
+	if err := os.MkdirAll(filepath.Dir(markerPath), 0755); err != nil {
+		return false, bootID, err
+	}
+	if err := os.WriteFile(markerPath, []byte(bootID+"\n"), 0644); err != nil {
+		return false, bootID, err
+	}
+	return true, bootID, nil
 }
 
 func (a *App) currentMonitorStatus() MonitorStatus {
@@ -635,18 +766,35 @@ type orderedItem struct {
 func ordered(cfg Config, monitorOnly bool) []orderedItem {
 	items := []orderedItem{}
 	for id, item := range cfg.Containers {
-		if !item.Enabled || (monitorOnly && !item.Monitor) {
+		if monitorOnly {
+			if !item.Monitor {
+				continue
+			}
+		} else if !item.Enabled {
 			continue
 		}
 		items = append(items, orderedItem{ID: id, Config: item})
 	}
 	sort.Slice(items, func(i, j int) bool {
-		if items[i].Config.StartupOrder != items[j].Config.StartupOrder {
-			return items[i].Config.StartupOrder < items[j].Config.StartupOrder
+		leftOrder := items[i].Config.StartupOrder
+		rightOrder := items[j].Config.StartupOrder
+		if monitorOnly {
+			leftOrder = monitorOrder(items[i].Config)
+			rightOrder = monitorOrder(items[j].Config)
+		}
+		if leftOrder != rightOrder {
+			return leftOrder < rightOrder
 		}
 		return items[i].ID < items[j].ID
 	})
 	return items
+}
+
+func monitorOrder(item ContainerConfig) int {
+	if item.MonitorOrder != 0 {
+		return item.MonitorOrder
+	}
+	return item.StartupOrder
 }
 
 func (a *App) readConfig() (Config, error) {
@@ -705,6 +853,10 @@ func normalizeConfig(cfg Config) Config {
 		if id == "" {
 			continue
 		}
+		itemMonitorOrder := item.MonitorOrder
+		if itemMonitorOrder == 0 {
+			itemMonitorOrder = item.StartupOrder
+		}
 		out.Containers[id] = ContainerConfig{
 			Enabled:             item.Enabled,
 			Name:                item.Name,
@@ -712,6 +864,7 @@ func normalizeConfig(cfg Config) Config {
 			StartupOrder:        clamp(item.StartupOrder, 0, 0, 999999),
 			StartupDelaySeconds: clamp(item.StartupDelaySeconds, 0, 0, 3600),
 			Monitor:             item.Monitor,
+			MonitorOrder:        clamp(itemMonitorOrder, 0, 0, 999999),
 			ReadinessMode:       normalizeReadinessMode(item.ReadinessMode),
 			FailurePolicy:       normalizeFailurePolicy(item.FailurePolicy),
 		}
@@ -726,23 +879,39 @@ func normalizeConfig(cfg Config) Config {
 
 func mergeDiscovered(cfg Config, containers []Container) Config {
 	cfg = normalizeConfig(cfg)
-	maxOrder := 0
-	for _, item := range cfg.Containers {
-		if item.StartupOrder > maxOrder {
-			maxOrder = item.StartupOrder
+	discovered := map[string]bool{}
+	for _, container := range containers {
+		discovered[container.ID] = true
+	}
+
+	maxStartupOrder := 0
+	maxMonitorOrder := 0
+	for id, item := range cfg.Containers {
+		if !discovered[id] {
+			continue
+		}
+		if item.StartupOrder > maxStartupOrder {
+			maxStartupOrder = item.StartupOrder
+		}
+		if monitorOrder(item) > maxMonitorOrder {
+			maxMonitorOrder = monitorOrder(item)
 		}
 	}
+
+	next := map[string]ContainerConfig{}
 	for _, container := range containers {
 		item, ok := cfg.Containers[container.ID]
 		if !ok {
-			maxOrder += 10
-			cfg.Containers[container.ID] = ContainerConfig{
-				Enabled:             true,
+			maxStartupOrder += 10
+			maxMonitorOrder += 10
+			next[container.ID] = ContainerConfig{
+				Enabled:             false,
 				Name:                container.Name,
 				Image:               container.Image,
-				StartupOrder:        maxOrder,
+				StartupOrder:        maxStartupOrder,
 				StartupDelaySeconds: 0,
-				Monitor:             true,
+				Monitor:             false,
+				MonitorOrder:        maxMonitorOrder,
 				ReadinessMode:       readinessAuto,
 				FailurePolicy:       policyRetry,
 			}
@@ -750,39 +919,24 @@ func mergeDiscovered(cfg Config, containers []Container) Config {
 		}
 		item.Name = container.Name
 		item.Image = container.Image
+		if item.MonitorOrder == 0 {
+			item.MonitorOrder = item.StartupOrder
+		}
 		item.ReadinessMode = normalizeReadinessMode(item.ReadinessMode)
 		item.FailurePolicy = normalizeFailurePolicy(item.FailurePolicy)
-		cfg.Containers[container.ID] = item
+		next[container.ID] = item
 	}
+	cfg.Containers = next
 	return cfg
 }
 
 func withConfiguredEntries(cfg Config, containers []Container) []Container {
-	out := make([]Container, 0, len(containers)+len(cfg.Containers))
-	seen := map[string]bool{}
+	out := make([]Container, 0, len(containers))
 	for _, container := range containers {
 		item := cfg.Containers[container.ID]
 		container.Config = item
 		container.Protected = cfg.Settings.ProtectManagerContainers && isManagerContainer(container.Name, container.Image)
 		out = append(out, container)
-		seen[container.ID] = true
-	}
-	for id, item := range cfg.Containers {
-		if seen[id] {
-			continue
-		}
-		out = append(out, Container{
-			ID:        id,
-			Name:      fallback(item.Name, id),
-			Image:     item.Image,
-			State:     "missing",
-			Status:    "Not discovered",
-			Health:    "none",
-			Running:   false,
-			Missing:   true,
-			Protected: cfg.Settings.ProtectManagerContainers && isManagerContainer(item.Name, item.Image),
-			Config:    item,
-		})
 	}
 	sort.SliceStable(out, func(i, j int) bool {
 		left := out[i].Config.StartupOrder
@@ -815,14 +969,7 @@ func normalizeFailurePolicy(value string) string {
 
 func isManagerContainer(name, image string) bool {
 	text := strings.ToLower(name + " " + image)
-	return strings.Contains(text, "docker-manager") || strings.Contains(text, "fnos-docker-manager")
-}
-
-func fallback(value, fallbackValue string) string {
-	if value == "" {
-		return fallbackValue
-	}
-	return value
+	return strings.Contains(text, "dockerstart") || strings.Contains(text, "docker-manager") || strings.Contains(text, "fnos-docker-manager")
 }
 
 func clamp(value, fallback, min, max int) int {
@@ -899,6 +1046,9 @@ func (a *App) trimLogs(limit int) error {
 }
 
 func (a *App) serveStatic(w http.ResponseWriter, r *http.Request, pathName string) {
+	w.Header().Set("Cache-Control", "no-store, no-cache, must-revalidate")
+	w.Header().Set("Pragma", "no-cache")
+	w.Header().Set("Expires", "0")
 	if pathName == "/" {
 		pathName = "/index.html"
 	}

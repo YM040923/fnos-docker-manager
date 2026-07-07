@@ -1,14 +1,14 @@
 {
   ".url": {
-    "dockermanager.Application": {
+    "dockerstart.Application": {
       "title": "Docker Manager",
-      "desc": "Docker 容器启动编排与运行监控工具",
-      "icon": "images/icon_{0}.png",
+      "desc": "Docker container startup orchestration and runtime monitor",
+      "icon": "images/docker-manager-3d_{0}.png",
       "type": "iframe",
       "protocol": "",
       "gatewaySocket": "app.sock",
-      "gatewayPrefix": "/app/dockermanager",
-      "url": "/app/dockermanager",
+      "gatewayPrefix": "/app/dockerstart",
+      "url": "/app/dockerstart",
       "allUsers": false
     }
   }

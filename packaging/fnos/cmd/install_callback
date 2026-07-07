@@ -1,4 +1,16 @@
 #!/usr/bin/env bash
 set -euo pipefail
-echo "Docker Manager install callback"
 
+script_dir="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
+pkg_dir="$(cd "$script_dir/.." && pwd)"
+app_dest="${TRIM_APPDEST:-${DOCKER_MANAGER_APP_DIR:-}}"
+if [ -n "$app_dest" ] && [ -f "$pkg_dir/app.tgz" ]; then
+  mkdir -p "$app_dest"
+  tar -xzf "$pkg_dir/app.tgz" -C "$app_dest"
+  chmod +x "$app_dest/server/docker-manager" 2>/dev/null || true
+fi
+
+"$(dirname "${BASH_SOURCE[0]}")/icon_sync" || true
+"$(dirname "${BASH_SOURCE[0]}")/main" install-autostart
+"$(dirname "${BASH_SOURCE[0]}")/main" start
+echo "Docker Manager install callback"

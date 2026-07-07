@@ -4,9 +4,9 @@ import path from "node:path";
 import zlib from "node:zlib";
 
 const root = path.resolve(import.meta.dirname, "..");
-const input = process.argv[2] || path.join(root, "dockermanager.fpk");
+const input = process.argv[2] || path.join(root, "dockerstart.fpk");
 const output =
-  process.argv[3] || path.join(root, "dist", "fnos", "DockerManager-fixed-x86_64.fpk");
+  process.argv[3] || path.join(root, "dist", "fnos", "DockerStart-fixed-x86_64.fpk");
 
 function parseOctal(buffer, start, length) {
   const text = buffer
@@ -89,7 +89,7 @@ function isTopExecutable(name) {
 }
 
 function isAppExecutable(name) {
-  return name === "bin/docker-manager" || name.startsWith("scripts/") || name.endsWith(".sh");
+  return name === "server/docker-manager" || name === "bin/docker-manager" || name.startsWith("scripts/") || name.endsWith(".sh");
 }
 
 function normalizeModes(entries, executablePredicate) {

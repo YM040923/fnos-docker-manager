@@ -32,9 +32,9 @@ function packageVariant(name, mutate) {
   copyDir(baseSource, src);
   mutate(src);
   run(fnpack, ["build", "-d", src]);
-  const raw = path.join(root, "dockermanager.fpk");
-  const rawOut = path.join(dist, `DockerManager-diag-${name}-raw.fpk`);
-  const fixedOut = path.join(dist, `DockerManager-diag-${name}-fixed.fpk`);
+  const raw = path.join(root, "dockerstart.fpk");
+  const rawOut = path.join(dist, `DockerStart-diag-${name}-raw.fpk`);
+  const fixedOut = path.join(dist, `DockerStart-diag-${name}-fixed.fpk`);
   fs.copyFileSync(raw, rawOut);
   run(process.execPath, [path.join(root, "scripts", "fix-fpk-modes.mjs"), rawOut, fixedOut]);
   console.log(`Diagnostic package: ${fixedOut}`);
@@ -49,10 +49,10 @@ packageVariant("url", (src) => {
     JSON.stringify(
       {
         ".url": {
-          "dockermanager.Application": {
+          "dockerstart.Application": {
             title: "Docker Manager",
             desc: "Docker container startup order and monitoring manager",
-            icon: "images/icon_{0}.png",
+            icon: "images/docker-manager-3d_{0}.png",
             type: "url",
             protocol: "",
             port: "8080",
@@ -90,10 +90,10 @@ while true; do sleep 3600; done
     JSON.stringify(
       {
         ".url": {
-          "dockermanager.Application": {
+          "dockerstart.Application": {
             title: "Docker Manager",
             desc: "Docker container startup order and monitoring manager",
-            icon: "images/icon_{0}.png",
+            icon: "images/docker-manager-3d_{0}.png",
             type: "url",
             protocol: "",
             port: "8080",

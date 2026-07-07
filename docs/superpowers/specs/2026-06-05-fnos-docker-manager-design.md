@@ -79,13 +79,12 @@ Backward compatibility rules:
 
 ## Container Discovery
 
-`GET /api/containers` returns discovered containers plus stale configured entries.
+`GET /api/containers` returns discovered containers and synchronizes configuration to the current Docker inventory.
 
 For discovered containers, the API should include:
 
 - id, name, image, state, status, health
 - running boolean
-- missing boolean
 - protected boolean
 - created timestamp when available
 - ports summary
@@ -94,7 +93,7 @@ For discovered containers, the API should include:
 - compose project and compose service labels when available
 - configured startup/monitor metadata from config
 
-For stale configured entries, return `missing: true`, display the saved name/image when available, and avoid deleting the entry automatically.
+When Docker discovery succeeds, containers that no longer exist are removed from configuration and startup orchestration automatically.
 
 ## Startup And Monitoring Semantics
 
@@ -103,7 +102,7 @@ Startup order is ascending. Lower numbers are dependencies of later numbers.
 For each enabled container in order:
 
 1. Inspect the container.
-2. If it is missing, stop the chain and record a blocked result.
+2. If Docker reports the container cannot be inspected or started, stop the chain and record a blocked result.
 3. If it is stopped, start it.
 4. If it is running but unhealthy and the failure policy is `retry`, restart it.
 5. Wait until ready before continuing.
@@ -127,7 +126,7 @@ The app has Docker control access, so the product must make dangerous actions de
 - Config import shows a validation result before saving.
 - Protected containers cannot be stopped or restarted from this app.
 - Names containing `docker-manager` are protected by default.
-- Missing containers are never auto-removed from config.
+- Removed containers are pruned from config after successful Docker discovery.
 - API errors must be structured and visible in the UI.
 
 ## API Surface
@@ -176,7 +175,7 @@ The UI should feel like a compact operations console:
 Expected interactions:
 
 - Search by name, image, ID, Compose project/service.
-- Filter by all, running, needs attention, stopped, missing, monitored only.
+- Filter by all, running, needs attention, stopped, monitored only.
 - Group by Compose project.
 - Edit order, delay, monitor, readiness mode, failure policy.
 - Open a container detail drawer.

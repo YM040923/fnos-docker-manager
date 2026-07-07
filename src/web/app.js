@@ -1,13 +1,31 @@
+import { setGuardParticipation, setStartupParticipation } from "./container-policy.js";
+import { nextSelectionOrder, positionInMode, reorderModeConfig, sortSelectionContainers } from "./selection-order.js";
+import {
+  chainRow,
+  detailLine,
+  escapeHtml,
+  logItem as logItemView,
+  metricCard,
+  problemRow,
+  selectionCard,
+} from "./ui-components.js";
+
 const pageMeta = {
   dashboard: ["控制台", "查看 Docker 守护状态、异常容器和最近事件。"],
-  plan: ["启动编排", "拖拽调整已纳入编排容器的启动顺序。"],
-  containers: ["容器管理", "选择哪些容器参与启动编排和后台守护。"],
+  orchestration: ["编排管理", "点击容器选择是否参与启动编排。"],
+  guard: ["守护管理", "点击容器选择是否由后台巡检守护。"],
   logs: ["事件日志", "筛选、导出或清空巡检和操作记录。"],
   settings: ["系统设置", "调整后台守护、保护策略和配置备份。"],
 };
 
+function initialView() {
+  const view = new URLSearchParams(window.location.search).get("view");
+  if (view === "plan" || view === "containers") return "orchestration";
+  return Object.hasOwn(pageMeta, view) ? view : "dashboard";
+}
+
 const state = {
-  activeView: "dashboard",
+  activeView: initialView(),
   containers: [],
   config: null,
   monitor: null,
@@ -16,17 +34,21 @@ const state = {
   dockerError: "",
   loading: false,
   filters: {
-    query: "",
-    status: "all",
-    monitoredOnly: false,
+    orchestrationQuery: "",
+    orchestrationStatus: "all",
+    orchestrationColumns: "3",
+    guardQuery: "",
+    guardStatus: "all",
+    guardColumns: "3",
     logQuery: "",
   },
 };
 
 let pendingConfirm = null;
-let draggedPlanId = "";
+let dragState = null;
+let suppressNextSelectionClick = false;
 
-const basePath = String(window.DOCKER_MANAGER_BASE || "/app/dockermanager").replace(/\/$/, "");
+const basePath = String(window.DOCKER_MANAGER_BASE || "/app/dockerstart").replace(/\/$/, "");
 const $ = (id) => document.getElementById(id);
 
 function route(path) {
@@ -111,6 +133,7 @@ async function loadDetails(id) {
 
 function setView(view) {
   state.activeView = view;
+  document.body.dataset.view = view;
   const [title, subtitle] = pageMeta[view] || pageMeta.dashboard;
   $("pageTitle").textContent = title;
   $("pageSubtitle").textContent = subtitle;
@@ -118,7 +141,13 @@ function setView(view) {
     section.classList.toggle("active", section.id === `${view}View`);
   });
   document.querySelectorAll(".nav-item").forEach((button) => {
-    button.classList.toggle("active", button.dataset.view === view);
+    const active = button.dataset.view === view;
+    button.classList.toggle("active", active);
+    if (active) {
+      button.setAttribute("aria-current", "page");
+    } else {
+      button.removeAttribute("aria-current");
+    }
   });
 }
 
@@ -126,8 +155,8 @@ function render() {
   setView(state.activeView);
   renderDashboard();
   renderSettings();
-  renderPlan();
-  renderInventory();
+  renderOrchestration();
+  renderGuard();
   renderLogs();
   renderRecentLogs();
   renderDetails();
@@ -137,11 +166,37 @@ function renderDashboard() {
   const cfg = draftConfig();
   const running = state.containers.filter((item) => item.state === "running" && !item.missing);
   const bad = state.containers.filter(isProblem);
-  const monitored = state.containers.filter((item) => (cfg.containers[item.id]?.monitor ?? item.config?.monitor) !== false);
-  setText("dockerState", state.dockerError ? "不可用" : "正常");
-  setText("monitorState", monitorText());
-  setText("containerCount", String(state.containers.length));
-  setText("badCount", String(bad.length));
+  const monitored = state.containers.filter((item) => isGuarded(item, cfg));
+  $("statGrid").innerHTML = [
+    metricCard({
+      label: "Docker 状态",
+      value: state.dockerError ? "不可用" : "正常",
+      caption: "Docker socket 访问状态",
+      tone: state.dockerError ? "danger" : "neutral",
+      accent: "↙",
+    }),
+    metricCard({
+      label: "后台守护",
+      value: monitorText(),
+      caption: "顺序巡检和自动恢复",
+      tone: state.monitor?.lastError ? "danger" : "neutral",
+      accent: "↗",
+    }),
+    metricCard({
+      label: "容器总数",
+      value: String(state.containers.length),
+      caption: "已发现和已记录容器",
+      tone: "neutral",
+      accent: "↙",
+    }),
+    metricCard({
+      label: "需要处理",
+      value: String(bad.length),
+      caption: "停止或异常",
+      tone: bad.length > 0 ? "warning" : "neutral",
+      accent: "↗",
+    }),
+  ].join("");
   setText("monitoredCount", String(monitored.length));
   setText("runningCount", String(running.length));
   setText("nextCheck", state.monitor?.nextCheckAt ? formatTime(state.monitor.nextCheckAt) : "-");
@@ -158,13 +213,14 @@ function renderChainSummary() {
     rows.length === 0
       ? '<div class="empty compact-empty">还没有容器纳入启动编排。</div>'
       : rows
-          .map((container, index) => {
-            return `<div class="chain-row">
-              <span class="order-dot">${index + 1}</span>
-              <strong title="${escapeHtml(container.name)}">${escapeHtml(container.name)}</strong>
-              <span class="status ${escapeHtml(statusClass(container))}">${escapeHtml(statusText(container))}</span>
-            </div>`;
-          })
+          .map((container, index) =>
+            chainRow({
+              order: index + 1,
+              name: container.name,
+              statusClass: statusClass(container),
+              statusText: statusText(container),
+            }),
+          )
           .join("");
 }
 
@@ -174,12 +230,14 @@ function renderProblemList(bad) {
       ? '<div class="empty compact-empty">暂无需要处理的容器。</div>'
       : bad
           .slice(0, 6)
-          .map(
-            (container) => `<button class="problem-row" type="button" data-id="${escapeHtml(container.id)}">
-              <span class="status ${escapeHtml(statusClass(container))}">${escapeHtml(statusText(container))}</span>
-              <strong title="${escapeHtml(container.name)}">${escapeHtml(container.name)}</strong>
-              <small>${escapeHtml(composeLabel(container))}</small>
-            </button>`,
+          .map((container) =>
+            problemRow({
+              id: container.id,
+              name: container.name,
+              meta: composeLabel(container),
+              statusClass: statusClass(container),
+              statusText: statusText(container),
+            }),
           )
           .join("");
 }
@@ -194,64 +252,123 @@ function renderSettings() {
   $("protectManager").checked = cfg.settings.protectManagerContainers !== false;
 }
 
-function renderPlan() {
+function renderOrchestration() {
   const cfg = draftConfig();
-  const rows = [...state.containers]
-    .filter((container) => isOrchestrated(container, cfg))
-    .sort((a, b) => orderOf(a, cfg) - orderOf(b, cfg) || a.name.localeCompare(b.name));
-  $("planRows").innerHTML =
-    rows.length === 0
-      ? '<div class="empty">还没有容器纳入启动编排。先到“容器管理”打开“纳入编排”。</div>'
-      : rows.map((container, index) => renderPlanRow(container, index)).join("");
+  const visible = filteredManagerContainers("orchestration");
+  const selected = orderedStartupContainers(cfg);
+  setText("orchestrationCount", String(selected.length));
+  renderSelectionGrid("orchestration", visible);
 }
 
-function renderPlanRow(container, index) {
-  return `<article class="plan-row draggable-row ${container.missing ? "is-missing" : ""}" data-id="${escapeHtml(container.id)}" draggable="${container.missing ? "false" : "true"}">
-    <div class="plan-main">
-      <button class="drag-handle" type="button" draggable="true" aria-label="拖拽排序">⋮⋮</button>
-      <span class="order-pill">${index + 1}</span>
-      <div class="container-title">
-        <strong title="${escapeHtml(container.name)}">${escapeHtml(container.name)}</strong>
-        <span>${escapeHtml(composeLabel(container))}</span>
-      </div>
-      <span class="status ${escapeHtml(statusClass(container))}">${escapeHtml(statusText(container))}</span>
-    </div>
-  </article>`;
+function renderGuard() {
+  const cfg = draftConfig();
+  const visible = filteredManagerContainers("guard");
+  const selected = state.containers.filter((container) => isGuarded(container, cfg));
+  setText("guardCount", String(selected.length));
+  renderSelectionGrid("guard", visible);
 }
 
-function renderInventory() {
-  const visible = filteredContainers();
-  $("emptyState").classList.toggle("hidden", visible.length !== 0);
-  if (visible.length === 0) {
-    $("inventoryRows").innerHTML = "";
-    return;
-  }
-  $("inventoryRows").innerHTML = visible.map(renderInventoryRow).join("");
+function renderSelectionGrid(mode, visible) {
+  const gridId = mode === "guard" ? "guardRows" : "orchestrationRows";
+  const emptyId = mode === "guard" ? "guardEmptyState" : "orchestrationEmptyState";
+  const columns = mode === "guard" ? state.filters.guardColumns : state.filters.orchestrationColumns;
+  const grid = $(gridId);
+  grid.className = `selection-grid cols-${escapeHtml(columns)}`;
+  $(emptyId).classList.toggle("hidden", visible.length !== 0);
+  const sorted = sortSelectionContainers(visible, draftConfig(), mode);
+  grid.innerHTML = visible.length === 0 ? "" : sorted.map((container) => renderSelectionCard(container, mode)).join("");
 }
 
-function renderInventoryRow(container) {
+function renderSelectionCard(container, mode) {
   const cfg = draftConfig();
   const item = cfg.containers[container.id] || container.config || {};
-  const portText = formatPorts(container.ports);
-  const protectedText = container.protected ? '<span class="tag">保护</span>' : "";
-  return `<article class="container-row ${container.missing ? "is-missing" : ""}" data-id="${escapeHtml(container.id)}">
-    <button class="row-open" data-action="details" type="button">
-      <span class="container-name" title="${escapeHtml(container.name)}">${escapeHtml(container.name)}</span>
-      <span class="container-meta">${escapeHtml(container.image || "未记录镜像")}</span>
-    </button>
-    <div class="container-state">
-      <span class="status ${escapeHtml(statusClass(container))}">${escapeHtml(statusText(container))}</span>
-      ${protectedText}
-    </div>
-    <div class="container-extra">
-      <span title="${escapeHtml(composeLabel(container))}">${escapeHtml(composeLabel(container))}</span>
-      <span title="${escapeHtml(portText)}">${escapeHtml(portText || "无端口")}</span>
-    </div>
-    <div class="policy-actions">
-      <label class="switch"><input data-policy="enabled" type="checkbox" ${item.enabled !== false ? "checked" : ""} />纳入编排</label>
-      <label class="switch"><input data-policy="monitor" type="checkbox" ${item.monitor !== false ? "checked" : ""} />巡检守护</label>
-    </div>
-  </article>`;
+  const selected = mode === "guard" ? isGuarded(container, cfg) : isOrchestrated(container, cfg);
+  const position = selected && mode === "orchestration" ? positionInMode(container.id, state.containers, cfg, mode) : 0;
+  return selectionCard({
+    id: container.id,
+    mode,
+    name: container.name,
+    statusClass: statusClass(container),
+    statusText: statusText(container),
+    selected,
+    missing: container.missing,
+    draggable: mode === "orchestration",
+    metaHtml: mode === "orchestration" ? renderStartupCardMeta(container, item, selected, position) : renderGuardCardMeta(selected),
+  });
+}
+
+function renderStartupCardMeta(container, item, selected, startupIndex) {
+  if (!selected) {
+    return '<div class="select-card-meta"><span class="select-chip muted">未编排</span></div>';
+  }
+  return `<div class="select-card-meta">
+    <span class="select-chip">第 ${startupIndex} 个启动</span>
+    <label class="inline-delay">
+      <span>启动后等待</span>
+      <input name="startupDelaySeconds-${escapeHtml(container.id)}" data-startup-delay type="number" min="0" max="3600" value="${numberValue(item.startupDelaySeconds, 0)}" />
+      <span>秒</span>
+    </label>
+  </div>`;
+}
+
+function renderGuardCardMeta(selected) {
+  return `<div class="select-card-meta">
+    <span class="select-chip ${selected ? "" : "muted"}">${selected ? "已守护" : "未守护"}</span>
+  </div>`;
+}
+
+function orderedStartupContainers(cfg = draftConfig()) {
+  return [...state.containers]
+    .filter((container) => isOrchestrated(container, cfg))
+    .sort((a, b) => orderOf(a, cfg) - orderOf(b, cfg) || a.name.localeCompare(b.name));
+}
+
+function toggleParticipation(id, mode) {
+  const cfg = draftConfig();
+  const container = state.containers.find((item) => item.id === id);
+  if (!container) return;
+  const current = {
+    ...(cfg.containers[id] || container.config || {}),
+    name: container.name || id,
+    image: container.image || "",
+  };
+  const selected = mode === "guard" ? current.monitor === true : current.enabled === true;
+  let next =
+    mode === "guard"
+      ? setGuardParticipation(current, !selected)
+      : setStartupParticipation(current, !selected);
+  if (mode === "orchestration" && !selected) {
+    next = { ...next, startupOrder: nextSelectionOrder(cfg, mode) };
+  }
+  if (mode === "guard" && !selected) {
+    next = { ...next, monitorOrder: nextSelectionOrder(cfg, mode) };
+  }
+  cfg.containers[id] = next;
+  renderDashboard();
+  renderOrchestration();
+  renderGuard();
+}
+
+function reorderSelection(draggedId, targetId, mode) {
+  state.config = reorderModeConfig({
+    config: draftConfig(),
+    containers: state.containers,
+    mode,
+    draggedId,
+    targetId,
+  });
+  renderDashboard();
+  renderOrchestration();
+  renderGuard();
+}
+
+function updateStartupDelay(id, value) {
+  const cfg = draftConfig();
+  const current = cfg.containers[id] || {};
+  cfg.containers[id] = {
+    ...current,
+    startupDelaySeconds: numberValue(value, current.startupDelaySeconds || 0),
+  };
 }
 
 function renderLogs() {
@@ -271,11 +388,11 @@ function renderRecentLogs() {
 }
 
 function renderLogItem(item) {
-  return `<div class="log-item">
-    <time>${escapeHtml(formatTime(item.time) || "")}</time>
-    <span>${escapeHtml(item.type || "event")}</span>
-    <p>${escapeHtml(item.message || "")}</p>
-  </div>`;
+  return logItemView({
+    time: formatTime(item.time),
+    type: item.type,
+    message: item.message,
+  });
 }
 
 function renderDetails() {
@@ -303,20 +420,15 @@ function renderDetails() {
     </dl>`;
 }
 
-function filteredContainers() {
-  const cfg = draftConfig();
-  const query = state.filters.query.trim().toLowerCase();
+function filteredManagerContainers(mode) {
+  const query = (mode === "guard" ? state.filters.guardQuery : state.filters.orchestrationQuery).trim().toLowerCase();
+  const status = mode === "guard" ? state.filters.guardStatus : state.filters.orchestrationStatus;
   return state.containers.filter((container) => {
-    const item = cfg.containers[container.id] || container.config || {};
-    if (state.filters.monitoredOnly && item.monitor === false) return false;
-    if (state.filters.status === "running" && isProblem(container)) return false;
-    if (state.filters.status === "problem" && !isProblem(container)) return false;
-    if (state.filters.status === "stopped" && (container.state === "running" || container.missing)) return false;
-    if (state.filters.status === "missing" && !container.missing) return false;
+    if (status === "running" && isProblem(container)) return false;
+    if (status === "problem" && !isProblem(container)) return false;
+    if (status === "stopped" && container.state === "running") return false;
     if (!query) return true;
-    return [container.name, container.image, container.id, container.composeProject, container.composeService, container.status]
-      .filter(Boolean)
-      .some((value) => String(value).toLowerCase().includes(query));
+    return [container.name, container.id].filter(Boolean).some((value) => String(value).toLowerCase().includes(query));
   });
 }
 
@@ -332,36 +444,8 @@ function syncSettingsToDraft() {
   };
 }
 
-function syncPlanOrder() {
-  const cfg = draftConfig();
-  document.querySelectorAll(".plan-row[data-id]").forEach((row, index) => {
-    const id = row.dataset.id;
-    const current = cfg.containers[id] || {};
-    cfg.containers[id] = {
-      ...current,
-      enabled: true,
-      startupOrder: index + 1,
-    };
-  });
-}
-
-function syncInventoryRow(row) {
-  if (!row) return;
-  const id = row.dataset.id;
-  const cfg = draftConfig();
-  const current = cfg.containers[id] || {};
-  cfg.containers[id] = {
-    ...current,
-    name: current.name || state.containers.find((item) => item.id === id)?.name || id,
-    enabled: row.querySelector('[data-policy="enabled"]').checked,
-    monitor: row.querySelector('[data-policy="monitor"]').checked,
-  };
-}
-
 function collectConfig() {
   syncSettingsToDraft();
-  document.querySelectorAll(".container-row[data-id]").forEach(syncInventoryRow);
-  syncPlanOrder();
   return draftConfig();
 }
 
@@ -376,18 +460,6 @@ async function saveConfig() {
   } catch (error) {
     showAlert(error.message);
   }
-}
-
-async function runAction(action, id) {
-  const container = state.containers.find((item) => item.id === id);
-  const label = container?.name || id;
-  if (action === "stop" || action === "restart") {
-    confirmAction(`${action === "stop" ? "停止" : "重启"}容器`, `确认${action === "stop" ? "停止" : "重启"} ${label}？`, "确认", () =>
-      postContainerAction(action, id),
-    );
-    return;
-  }
-  await postContainerAction(action, id);
 }
 
 async function postContainerAction(action, id) {
@@ -503,7 +575,6 @@ function statusClass(container) {
 }
 
 function statusText(container) {
-  if (container.missing) return "已失联";
   if (container.health === "unhealthy") return "异常";
   if (container.health === "healthy") return "健康";
   const map = {
@@ -538,10 +609,6 @@ function formatMounts(mounts = []) {
   return mounts.map((item) => `${item.source || item.type} -> ${item.destination}`).join("\n");
 }
 
-function detailLine(label, value) {
-  return `<dt>${escapeHtml(label)}</dt><dd>${escapeHtml(value || "-")}</dd>`;
-}
-
 function option(value, label, current) {
   return `<option value="${value}" ${String(current || "auto") === value ? "selected" : ""}>${label}</option>`;
 }
@@ -552,7 +619,12 @@ function numberValue(value, fallback) {
 
 function isOrchestrated(container, cfg = draftConfig()) {
   const item = cfg.containers[container.id] || container.config || {};
-  return item.enabled !== false;
+  return item.enabled === true;
+}
+
+function isGuarded(container, cfg = draftConfig()) {
+  const item = cfg.containers[container.id] || container.config || {};
+  return item.monitor === true;
 }
 
 function orderOf(container, cfg = draftConfig()) {
@@ -582,6 +654,7 @@ function setLoading(loading) {
   state.loading = loading;
   document.querySelectorAll("button").forEach((button) => {
     if (button.closest(".modal")) return;
+    if (button.closest(".nav")) return;
     if (loading) {
       button.dataset.wasDisabled = button.disabled ? "true" : "false";
       button.disabled = true;
@@ -604,12 +677,82 @@ function downloadJSON(filename, value) {
   URL.revokeObjectURL(url);
 }
 
-function escapeHtml(value) {
-  return String(value ?? "")
-    .replaceAll("&", "&amp;")
-    .replaceAll("<", "&lt;")
-    .replaceAll(">", "&gt;")
-    .replaceAll('"', "&quot;");
+function attachSelectionGrid(id) {
+  const grid = $(id);
+  grid.addEventListener("dragstart", (event) => {
+    if (event.target.closest("input, select, button, label")) return;
+    const card = event.target.closest(".select-card[data-id]");
+    if (!card) return;
+    if (card.dataset.selectMode !== "orchestration") {
+      event.preventDefault();
+      return;
+    }
+    dragState = {
+      id: card.dataset.id,
+      mode: card.dataset.selectMode,
+    };
+    card.classList.add("is-dragging");
+    event.dataTransfer.effectAllowed = "move";
+    event.dataTransfer.setData("text/plain", card.dataset.id);
+  });
+  grid.addEventListener("dragover", (event) => {
+    if (!dragState) return;
+    if (dragState.mode !== "orchestration") return;
+    const card = event.target.closest(".select-card[data-id]");
+    if (!card) {
+      event.preventDefault();
+      event.dataTransfer.dropEffect = "move";
+      return;
+    }
+    if (card.dataset.selectMode !== dragState.mode || card.dataset.id === dragState.id) return;
+    event.preventDefault();
+    event.dataTransfer.dropEffect = "move";
+    grid.querySelectorAll(".select-card.is-drop-target").forEach((item) => item.classList.remove("is-drop-target"));
+    card.classList.add("is-drop-target");
+  });
+  grid.addEventListener("dragleave", (event) => {
+    const card = event.target.closest(".select-card.is-drop-target");
+    if (card && !card.contains(event.relatedTarget)) card.classList.remove("is-drop-target");
+  });
+  grid.addEventListener("drop", (event) => {
+    if (!dragState) return;
+    if (dragState.mode !== "orchestration") return;
+    const card = event.target.closest(".select-card[data-id]");
+    if (card && card.dataset.selectMode !== dragState.mode) return;
+    event.preventDefault();
+    reorderSelection(dragState.id, card?.dataset.id, dragState.mode);
+    dragState = null;
+    suppressNextSelectionClick = true;
+  });
+  grid.addEventListener("dragend", () => {
+    grid.querySelectorAll(".select-card.is-dragging, .select-card.is-drop-target").forEach((card) => {
+      card.classList.remove("is-dragging", "is-drop-target");
+    });
+    dragState = null;
+  });
+  grid.addEventListener("click", (event) => {
+    if (suppressNextSelectionClick) {
+      suppressNextSelectionClick = false;
+      return;
+    }
+    if (event.target.closest("input, select, button, label")) return;
+    const card = event.target.closest(".select-card[data-id]");
+    if (!card) return;
+    toggleParticipation(card.dataset.id, card.dataset.selectMode);
+  });
+  grid.addEventListener("keydown", (event) => {
+    if (event.key !== "Enter" && event.key !== " ") return;
+    const card = event.target.closest(".select-card[data-id]");
+    if (!card) return;
+    event.preventDefault();
+    toggleParticipation(card.dataset.id, card.dataset.selectMode);
+  });
+  grid.addEventListener("input", (event) => {
+    if (!event.target.matches("[data-startup-delay]")) return;
+    const card = event.target.closest(".select-card[data-id]");
+    if (!card) return;
+    updateStartupDelay(card.dataset.id, event.target.value);
+  });
 }
 
 document.querySelectorAll(".nav-item").forEach((button) => {
@@ -622,72 +765,40 @@ $("refreshBtn").addEventListener("click", refreshAll);
 $("startupBtn").addEventListener("click", runOrderedStartup);
 $("saveBtn").addEventListener("click", saveConfig);
 $("saveSettingsBtn").addEventListener("click", saveConfig);
-$("saveContainerPolicyBtn").addEventListener("click", saveConfig);
-$("searchInput").addEventListener("input", (event) => {
-  state.filters.query = event.target.value;
-  renderInventory();
+$("saveGuardBtn").addEventListener("click", saveConfig);
+$("orchestrationSearchInput").addEventListener("input", (event) => {
+  state.filters.orchestrationQuery = event.target.value;
+  renderOrchestration();
 });
-$("statusFilter").addEventListener("change", (event) => {
-  state.filters.status = event.target.value;
-  renderInventory();
+$("orchestrationStatusFilter").addEventListener("change", (event) => {
+  state.filters.orchestrationStatus = event.target.value;
+  renderOrchestration();
 });
-$("monitoredOnly").addEventListener("change", (event) => {
-  state.filters.monitoredOnly = event.target.checked;
-  renderInventory();
+$("orchestrationColumns").addEventListener("change", (event) => {
+  state.filters.orchestrationColumns = event.target.value;
+  renderOrchestration();
+});
+$("guardSearchInput").addEventListener("input", (event) => {
+  state.filters.guardQuery = event.target.value;
+  renderGuard();
+});
+$("guardStatusFilter").addEventListener("change", (event) => {
+  state.filters.guardStatus = event.target.value;
+  renderGuard();
+});
+$("guardColumns").addEventListener("change", (event) => {
+  state.filters.guardColumns = event.target.value;
+  renderGuard();
 });
 $("logSearchInput").addEventListener("input", (event) => {
   state.filters.logQuery = event.target.value;
   renderLogs();
 });
-$("planRows").addEventListener("dragstart", (event) => {
-  const row = event.target.closest(".plan-row[data-id]");
-  if (!row || row.getAttribute("draggable") !== "true") return;
-  draggedPlanId = row.dataset.id;
-  row.classList.add("is-dragging");
-  event.dataTransfer.effectAllowed = "move";
-  event.dataTransfer.setData("text/plain", draggedPlanId);
-});
-$("planRows").addEventListener("dragend", (event) => {
-  event.target.closest(".plan-row")?.classList.remove("is-dragging");
-  draggedPlanId = "";
-});
-$("planRows").addEventListener("dragover", (event) => {
-  const over = event.target.closest(".plan-row[data-id]");
-  if (!over || !draggedPlanId || over.dataset.id === draggedPlanId) return;
-  event.preventDefault();
-  const dragging = $(`planRows`).querySelector(`[data-id="${CSS.escape(draggedPlanId)}"]`);
-  if (!dragging) return;
-  const rect = over.getBoundingClientRect();
-  const after = event.clientY > rect.top + rect.height / 2;
-  over.insertAdjacentElement(after ? "afterend" : "beforebegin", dragging);
-});
-$("planRows").addEventListener("drop", (event) => {
-  if (!draggedPlanId) return;
-  event.preventDefault();
-  syncPlanOrder();
-  renderPlan();
-});
-$("inventoryRows").addEventListener("click", (event) => {
-  const button = event.target.closest("button[data-action]");
-  if (!button) return;
-  const row = button.closest("[data-id]");
-  const action = button.dataset.action;
-  if (action === "details") {
-    loadDetails(row.dataset.id);
-    return;
-  }
-  runAction(action, row.dataset.id);
-});
-$("inventoryRows").addEventListener("change", (event) => {
-  if (!event.target.matches("[data-policy]")) return;
-  syncInventoryRow(event.target.closest(".container-row"));
-  renderDashboard();
-  renderPlan();
-});
+attachSelectionGrid("orchestrationRows");
+attachSelectionGrid("guardRows");
 $("problemList").addEventListener("click", (event) => {
   const row = event.target.closest("[data-id]");
   if (!row) return;
-  setView("containers");
   loadDetails(row.dataset.id);
 });
 $("closeDetailsBtn").addEventListener("click", () => {

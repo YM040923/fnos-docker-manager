@@ -40,7 +40,7 @@ test("ConfigStore creates a default config when missing", async () => {
   assert.equal(config.settings.checkIntervalSeconds, 60);
 });
 
-test("mergeDiscoveredContainers assigns new startup orders without deleting stale config", () => {
+test("mergeDiscoveredContainers prunes stale config and assigns new startup orders", () => {
   const config = mergeDiscoveredContainers(
     {
       version: 1,
@@ -52,7 +52,8 @@ test("mergeDiscoveredContainers assigns new startup orders without deleting stal
     [{ id: "new", name: "new" }],
   );
 
-  assert.ok(config.containers.old);
-  assert.equal(config.containers.new.startupOrder, 30);
+  assert.equal(config.containers.old, undefined);
+  assert.equal(config.containers.new.startupOrder, 10);
+  assert.equal(config.containers.new.enabled, false);
+  assert.equal(config.containers.new.monitor, false);
 });
-

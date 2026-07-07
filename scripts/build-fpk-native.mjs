@@ -8,7 +8,7 @@ const pkg = JSON.parse(fs.readFileSync(path.join(root, "package.json"), "utf8"))
 const dist = path.join(root, "dist", "fnos");
 const runtime = path.join(dist, "runtime");
 const outDir = dist;
-const packageName = `DockerManager-${pkg.version}-native-x86_64.fpk`;
+const packageName = `DockerStart-${pkg.version}-native-x86_64.fpk`;
 const outFile = path.join(outDir, packageName);
 
 function listFiles(dir, base = dir) {
@@ -101,7 +101,7 @@ function readText(file) {
 }
 
 function isExecutableRel(rel) {
-  return rel === "bin/docker-manager" || rel.startsWith("cmd/") || rel.startsWith("scripts/") || rel.endsWith(".sh");
+  return rel === "server/docker-manager" || rel === "bin/docker-manager" || rel.startsWith("cmd/") || rel.startsWith("scripts/") || rel.endsWith(".sh");
 }
 
 function makeAppTgz() {
