@@ -126,10 +126,18 @@ func main() {
 	dataDir := getenv("TRIM_PKGVAR", filepath.Join(appDest, "var"))
 	socketPath := getenv("FNOS_SOCKET_PATH", filepath.Join(appDest, "app.sock"))
 	webDir := getenv("FNOS_WEB_DIR", filepath.Join(appDest, "web"))
+	listenAddr := os.Getenv("APP_LISTEN_ADDR")
 
 	app := NewApp(dataDir, webDir, getenv("DOCKER_SOCKET", "/var/run/docker.sock"))
 	app.startBootStartupOnce()
 	app.startMonitorLoop()
+	if listenAddr != "" {
+		log.Printf("Docker Manager listening on http://%s", listenAddr)
+		if err := http.ListenAndServe(listenAddr, app.routes()); err != nil {
+			log.Fatal(err)
+		}
+		return
+	}
 	_ = os.Remove(socketPath)
 	if err := os.MkdirAll(filepath.Dir(socketPath), 0755); err != nil {
 		log.Fatal(err)

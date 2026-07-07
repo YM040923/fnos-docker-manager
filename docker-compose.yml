@@ -1,0 +1,18 @@
+services:
+  dockerstart:
+    image: ghcr.io/ym040923/fnos-docker-manager:latest
+    container_name: dockerstart
+    restart: unless-stopped
+    ports:
+      - "13000:13000"
+    environment:
+      APP_LISTEN_ADDR: "0.0.0.0:13000"
+      TRIM_PKGVAR: "/data"
+      FNOS_WEB_DIR: "/app/web"
+      DOCKER_SOCKET: "/var/run/docker.sock"
+    volumes:
+      - dockerstart_data:/data
+      - /var/run/docker.sock:/var/run/docker.sock
+
+volumes:
+  dockerstart_data:
