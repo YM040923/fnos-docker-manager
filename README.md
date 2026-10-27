@@ -81,3 +81,7 @@ Build the Docker image:
 docker build -t dockerstart:local .
 docker compose up -d
 ```
+
+## 许可证
+
+本仓库采用 MIT License，见 [`LICENSE`](LICENSE)。
